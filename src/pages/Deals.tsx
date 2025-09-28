@@ -4,18 +4,23 @@ import { Button, Card } from "../components/ui";
 import Modal from "../components/forms/Modal";
 import DealForm from "../components/forms/DealForm";
 
+/* ---------- Types ---------- */
+
 type DealRow = {
   id: number;
-  name: string | null;          // company name
+  invoice_number?: string | null; // ← add this
+  name: string | null;
   city: string | null;
   state: string | null;
-  stage: string | null;         // 'paid' | 'unpaid'
+  stage: string | null;
   account_rep: string | null;
   value: string | number | null;
-  close_date: string | null;    // YYYY-MM-DD
+  close_date: string | null;
 };
 
 type StageFilter = "all" | "paid" | "unpaid";
+
+/* ---------- Page ---------- */
 
 export default function Deals() {
   const [rows, setRows] = useState<DealRow[]>([]);
@@ -27,18 +32,21 @@ export default function Deals() {
   const [rep, setRep] = useState<string>("all");
   const [companyQuery, setCompanyQuery] = useState<string>("");
 
-  // Modal + reload
+  // Modals + reload
   const [openAdd, setOpenAdd] = useState(false);
+  const [editDeal, setEditDeal] = useState<DealRow | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+
+  /* ---------- Data load ---------- */
 
   useEffect(() => {
     (async () => {
       setLoading(true);
       const { data, error } = await supabase
-        .from("deals")
-        .select("id, name, city, state, stage, account_rep, value, close_date, created_at")
-        .order("created_at", { ascending: false })
-        .returns<DealRow[]>();
+          .from("deals")
+          .select("id, invoice_number, name, city, state, stage, account_rep, value, close_date, created_at")
+          .order("created_at", { ascending: false })
+          .returns<DealRow[]>();
 
       if (error) {
         console.error(error);
@@ -54,9 +62,10 @@ export default function Deals() {
       }
       setLoading(false);
     })();
-  }, [reloadKey]); // 👈 refetch after a successful add
+  }, [reloadKey]);
 
-  // Build unique rep list (sorted)
+  /* ---------- Derived ---------- */
+
   const reps = useMemo(() => {
     const set = new Set<string>();
     for (const r of rows) {
@@ -65,7 +74,6 @@ export default function Deals() {
     return ["all", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
   }, [rows]);
 
-  // Filtered rows
   const filtered = useMemo(() => {
     const q = companyQuery.trim().toLowerCase();
     return rows.filter((r) => {
@@ -75,6 +83,8 @@ export default function Deals() {
       return stageOk && repOk && nameOk;
     });
   }, [rows, stage, rep, companyQuery]);
+
+  /* ---------- Utils ---------- */
 
   const currency = (v: string | number | null | undefined): string => {
     const n =
@@ -93,6 +103,20 @@ export default function Deals() {
     setRep("all");
     setCompanyQuery("");
   };
+
+  /* ---------- Actions ---------- */
+
+  async function handleDeleteDeal(id: number) {
+    if (!confirm("Delete this deal? This cannot be undone.")) return;
+    const { error } = await supabase.from("deals").delete().eq("id", id).select();
+    if (error) {
+      alert("Delete failed: " + error.message);
+      return;
+    }
+    setReloadKey((k) => k + 1);
+  }
+
+  /* ---------- Render ---------- */
 
   return (
     <section className="space-y-4">
@@ -143,6 +167,7 @@ export default function Deals() {
           </div>
 
           <div className="flex items-center gap-2">
+            <Button onClick={() => setOpenAdd(true)}>Add Deal</Button>
             <Button onClick={resetFilters} variant="secondary">Reset</Button>
           </div>
         </div>
@@ -165,6 +190,7 @@ export default function Deals() {
                 <th className="px-4 py-2 text-center">Stage</th>
                 <th className="px-4 py-2 text-right">Value</th>
                 <th className="px-4 py-2 text-center">Close Date</th>
+                <th className="px-4 py-2 text-right">Actions</th>{/* NEW */}
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -172,7 +198,9 @@ export default function Deals() {
                 <tr key={d.id} className="hover:bg-gray-50">
                   <td className="px-4 py-2">
                     <div className="font-medium">{d.name ?? "Untitled"}</div>
-                    <div className="text-xs text-gray-500">ID: {d.id}</div>
+                    <div className="text-xs text-gray-500">
+                      {d.invoice_number ? `Invoice: ${d.invoice_number}` : `ID: ${d.id}`}
+                    </div>
                   </td>
                   <td className="px-4 py-2">
                     {d.city ?? "—"}, {d.state ?? "—"}
@@ -197,6 +225,24 @@ export default function Deals() {
                   <td className="px-4 py-2 text-center">
                     {d.close_date ? new Date(d.close_date).toLocaleDateString() : "—"}
                   </td>
+                  <td className="px-4 py-2 text-right">
+                    <button
+                      type="button"
+                      className="text-xs underline text-sc-delft/70 hover:text-sc-orange mr-3"
+                      onClick={() => setEditDeal(d)}
+                      aria-label={`Edit ${d.name ?? `deal #${d.id}`}`}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="text-xs underline text-red-600 hover:text-red-700"
+                      onClick={() => handleDeleteDeal(d.id)}
+                      aria-label={`Delete ${d.name ?? `deal #${d.id}`}`}
+                    >
+                      Delete
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -209,10 +255,110 @@ export default function Deals() {
         <DealForm
           onDone={() => {
             setOpenAdd(false);
-            setReloadKey((k) => k + 1); // 👈 refetch list after save
+            setReloadKey((k) => k + 1);
           }}
         />
       </Modal>
+
+      {/* Edit Deal Modal */}
+      {editDeal && (
+        <EditDealModal
+          deal={editDeal}
+          onClose={() => setEditDeal(null)}
+          onSaved={() => {
+            setEditDeal(null);
+            setReloadKey((k) => k + 1);
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+/* ---------- Inline Edit Modal ---------- */
+
+function EditDealModal({
+  deal,
+  onClose,
+  onSaved,
+}: {
+  deal: DealRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState({
+    name: deal.name ?? "",
+    city: deal.city ?? "",
+    state: deal.state ?? "",
+    account_rep: deal.account_rep ?? "",
+    value: deal.value ?? "",
+    stage: (deal.stage as "paid" | "unpaid") ?? "unpaid",
+    close_date: deal.close_date ?? "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const handle = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setForm((f) => ({ ...f, [name]: value }));
+  };
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+
+    const payload = {
+      name: form.name || null,
+      city: form.city || null,
+      state: form.state || null,
+      account_rep: form.account_rep || null,
+      value: form.value === "" ? null : Number(form.value),
+      stage: form.stage || null,
+      close_date: form.close_date || null,
+    };
+
+    const { error } = await supabase.from("deals").update(payload).eq("id", deal.id);
+    setBusy(false);
+    if (error) setErr(error.message);
+    else onSaved();
+  }
+
+  return (
+    <Modal open title={`Edit Deal — ${deal.name ?? `#${deal.id}`}`} onClose={onClose}>
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <label className="text-sm">Company
+            <input name="name" className="mt-1 w-full border rounded px-2 py-1" value={form.name} onChange={handle}/>
+          </label>
+          <label className="text-sm">Rep
+            <input name="account_rep" className="mt-1 w-full border rounded px-2 py-1" value={form.account_rep} onChange={handle}/>
+          </label>
+          <label className="text-sm">City
+            <input name="city" className="mt-1 w-full border rounded px-2 py-1" value={form.city} onChange={handle}/>
+          </label>
+          <label className="text-sm">State
+            <input name="state" className="mt-1 w-full border rounded px-2 py-1" value={form.state} onChange={handle}/>
+          </label>
+          <label className="text-sm">Value (USD)
+            <input name="value" type="number" min="0" className="mt-1 w-full border rounded px-2 py-1" value={form.value as any} onChange={handle}/>
+          </label>
+          <label className="text-sm">Stage
+            <select name="stage" className="mt-1 w-full border rounded px-2 py-1" value={form.stage} onChange={handle}>
+              <option value="unpaid">unpaid</option>
+              <option value="paid">paid</option>
+            </select>
+          </label>
+          <label className="text-sm col-span-2">Close Date
+            <input name="close_date" type="date" className="mt-1 w-full border rounded px-2 py-1" value={form.close_date ?? ""} onChange={handle}/>
+          </label>
+        </div>
+
+        {err && <div className="text-sm text-red-600">{err}</div>}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save Changes"}</Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
