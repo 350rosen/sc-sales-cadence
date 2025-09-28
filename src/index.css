@@ -1,0 +1,42 @@
+@import "tailwindcss";
+@import "@fontsource/poppins/300.css";
+@import "@fontsource/poppins/400.css";
+@import "@fontsource/poppins/600.css";
+@import "@fontsource/poppins/700.css";
+
+/* Define brand tokens for Tailwind v4 */
+@theme {
+  --color-sc-orange:    #F58529;
+  --color-sc-lightgreen:#98C93C;
+  --color-sc-delft:     #29335C;
+  --color-sc-offwhite:  #EDF6F9;
+  --color-sc-black:     #231F20;
+  --color-sc-white:     #FFFFFF;
+  --color-sc-green:     #1F5B2C;
+
+  --font-heading: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --font-body:    "Poppins", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Global theme */
+:root { color-scheme: light; }
+html, body, #root { height: 100%; }
+
+body { @apply bg-sc-offwhite text-sc-black font-body; }
+
+/* Typography */
+@layer base {
+  h1 { @apply font-heading font-extrabold text-5xl leading-tight tracking-tight; }
+  h2 { @apply font-heading font-bold text-3xl leading-snug tracking-tight; }
+  h3 { @apply font-heading font-semibold text-2xl; }
+  p  { @apply font-body text-[15px] leading-7 text-sc-delft/80; }
+  small, .caption { @apply text-xs text-sc-delft/60; }
+}
+
+@layer utilities {
+  .heading-xl { @apply font-heading font-extrabold text-5xl tracking-tight; }
+  .heading-lg { @apply font-heading font-bold text-3xl; }
+  .subheading { @apply font-heading font-bold text-2xl; }
+  .body       { @apply font-body text-[15px] leading-7; }
+  .caption    { @apply text-xs text-sc-delft/60; }
+}
