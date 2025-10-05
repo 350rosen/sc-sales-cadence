@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
 import { Button } from "../ui";
 
-type Props = { onDone: () => void };
+type Props = { onDone: () => void; fixedRep?: string };
 
 type DealRow = {
   id: number;

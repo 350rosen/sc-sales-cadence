@@ -1,11 +1,16 @@
-// src/components/deals/AddDealExtendedForm.tsx
 import { useMemo, useState } from "react";
 import Papa from "papaparse";
 import FileDropzone from "../files/FileDropzone";
 import { supabase } from "../../lib/supabaseClient";
 import { Button } from "../ui";
 
-type Props = { onDone: () => void };
+type Props = {
+  onDone: () => void;
+  /** Pre-fill the Rep (also used for CSV default) */
+  defaultRep?: string;
+  /** If true, hide/lock the Rep input and always use defaultRep */
+  lockRep?: boolean;
+};
 
 type DealInsert = {
   name: string | null;
@@ -37,16 +42,15 @@ const HEADERS = {
   total: "Total",
   paid: "Paid",
   dateUtc: "Date (UTC)",
-  status: "Status",                  // already existed — keep only once
+  status: "Status",
   customer: "Customer",
   customerName: "Customer Name",
   customerEmail: "Customer Email",
   city: "Customer Address City",
   state: "Customer Address State",
-  invoiceNumber: "Number",           // NEW
-  voidedAt: "Voided At (UTC)",       // NEW
+  invoiceNumber: "Number",
+  voidedAt: "Voided At (UTC)",
 } as const;
-
 
 const toNumber = (v: unknown): number | null => {
   if (v == null) return null;
@@ -60,17 +64,17 @@ const toDateYYYYMMDD = (v?: string): string | null => {
 };
 const truthy = (v?: string) => /^(true|1|yes)$/i.test(String(v ?? "").trim());
 
-export default function AddDealExtendedForm({ onDone }: Props) {
-  const [mode, setMode] = useState<"manual" | "csv">("csv"); // default to CSV per your request
+export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Props) {
+  const [mode, setMode] = useState<"manual" | "csv">("csv");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // ---------- Manual form (unchanged from your version, small tightening) ----------
+  // ---------- Manual form ----------
   const [form, setForm] = useState({
     name: "",
     city: "",
     state: "",
-    account_rep: "",
+    account_rep: defaultRep ?? "",
     value: "",
     stage: "unpaid" as "paid" | "unpaid",
     close_date: "",
@@ -97,11 +101,13 @@ export default function AddDealExtendedForm({ onDone }: Props) {
     setBusy(true);
     setErr(null);
 
+    const finalRep = (defaultRep ?? form.account_rep) || null;
+
     const payload: DealInsert = {
       name: form.name || null,
       city: form.city || null,
       state: form.state || null,
-      account_rep: form.account_rep || null,
+      account_rep: finalRep,
       value: form.value ? Number(form.value) : null,
       stage: form.stage || null,
       close_date: form.close_date || null,
@@ -124,87 +130,81 @@ export default function AddDealExtendedForm({ onDone }: Props) {
   }
 
   // ---------- CSV mode ----------
-  const [defaultRep, setDefaultRep] = useState(""); // applied to all uploaded rows
+  const [defaultRepCsv, setDefaultRepCsv] = useState(defaultRep ?? "");
   const [csvRows, setCsvRows] = useState<DealInsert[]>([]);
   const [parseErr, setParseErr] = useState<string | null>(null);
 
   const canImport = useMemo(() => csvRows.length > 0 && !busy, [csvRows, busy]);
 
   function parseCsvFile(file: File) {
-  setParseErr(null);
-  setCsvRows([]);
-  Papa.parse<CsvRow>(file, {
-    header: true,
-    skipEmptyLines: true,
-    transformHeader: (h) => h.trim(),
-    complete: (res) => {
-      if (res.errors?.length) {
-        setParseErr(res.errors[0]?.message || "CSV parse error");
-        return;
-      }
+    setParseErr(null);
+    setCsvRows([]);
+    Papa.parse<CsvRow>(file, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: (h) => h.trim(),
+      complete: (res) => {
+        if (res.errors?.length) {
+          setParseErr(res.errors[0]?.message || "CSV parse error");
+          return;
+        }
 
-      // ignore Drafts & Voids
-      const filtered = (res.data as CsvRow[]).filter((r) => {
-        const status = (r[HEADERS.status] ?? "").toLowerCase().trim();
-        const isDraft = status.includes("draft");
-        const isVoidedByStatus = status === "void" || status === "voided" || status.includes("void");
-        const isVoidedByField = !!String(r[HEADERS.voidedAt] ?? "").trim();
-        return !(isDraft || isVoidedByStatus || isVoidedByField);
-      });
+        // Ignore Drafts & Voids
+        const filtered = (res.data as CsvRow[]).filter((r) => {
+          const status = (r[HEADERS.status] ?? "").toLowerCase().trim();
+          const isDraft = status.includes("draft");
+          const isVoidedByStatus = status === "void" || status === "voided" || status.includes("void");
+          const isVoidedByField = !!String(r[HEADERS.voidedAt] ?? "").trim();
+          return !(isDraft || isVoidedByStatus || isVoidedByField);
+        });
 
-      const mapped: DealInsert[] = filtered.map((r) => {
-        const paid = truthy(r[HEADERS.paid]);
-        const name =
-          r[HEADERS.customerName]?.trim() ||
-          r[HEADERS.customer]?.trim() ||
-          "";
-        const value = toNumber(r[HEADERS.total]) ?? toNumber(r[HEADERS.amountDue]);
+        const mapped: DealInsert[] = filtered.map((r) => {
+          const paid = truthy(r[HEADERS.paid]);
+          const name =
+            r[HEADERS.customerName]?.trim() ||
+            r[HEADERS.customer]?.trim() ||
+            "";
+          const value = toNumber(r[HEADERS.total]) ?? toNumber(r[HEADERS.amountDue]);
 
-        return {
-          // store invoice number (use this for display as “ID”)
-          invoice_number: r[HEADERS.invoiceNumber]?.trim() || null,
+          return {
+            invoice_number: r[HEADERS.invoiceNumber]?.trim() || null,
+            name: name || null,
+            city: r[HEADERS.city]?.trim() || null,
+            state: r[HEADERS.state]?.trim() || null,
+            account_rep: defaultRepCsv ? defaultRepCsv : null,
+            value,
+            stage: paid ? "paid" : "unpaid",
+            close_date: toDateYYYYMMDD(r[HEADERS.dateUtc]),
+            main_contact: null,
+            main_contact_title: null,
+            main_contact_email: r[HEADERS.customerEmail]?.trim() || null,
+            main_contact_phone: null,
+            billing_contact_name: null,
+            billing_contact_title: null,
+            billing_contact_email: null,
+            billing_contact_phone: null,
+          };
+        });
 
-          name: name || null,
-          city: r[HEADERS.city]?.trim() || null,
-          state: r[HEADERS.state]?.trim() || null,
-          account_rep: defaultRep ? defaultRep : null,
-          value,
-          stage: paid ? "paid" : "unpaid",
-          close_date: toDateYYYYMMDD(r[HEADERS.dateUtc]),
-
-          main_contact: null,
-          main_contact_title: null,
-          main_contact_email: r[HEADERS.customerEmail]?.trim() || null,
-          main_contact_phone: null,
-
-          billing_contact_name: null,
-          billing_contact_title: null,
-          billing_contact_email: null,
-          billing_contact_phone: null,
-        };
-      });
-
-      const clean = mapped.filter(
-        (d) => (d.name && d.name !== "") || (d.value != null && d.value > 0)
-      );
-      setCsvRows(clean);
-    },
-    error: (e) => setParseErr(e.message || "CSV parse error"),
-  });
-}
+        const clean = mapped.filter(
+          (d) => (d.name && d.name !== "") || (d.value != null && d.value > 0)
+        );
+        setCsvRows(clean);
+      },
+      error: (e) => setParseErr(e.message || "CSV parse error"),
+    });
+  }
 
   async function importCsv() {
     if (csvRows.length === 0) return;
     setBusy(true);
     setErr(null);
 
-    // apply default rep before insert
     const rows = csvRows.map((r) => ({
       ...r,
-      account_rep: r.account_rep || (defaultRep ? defaultRep : null),
+      account_rep: r.account_rep || (defaultRepCsv ? defaultRepCsv : null),
     }));
 
-    // Chunk to avoid payload limits
     const chunkSize = 500;
     for (let i = 0; i < rows.length; i += chunkSize) {
       const slice = rows.slice(i, i + chunkSize);
@@ -241,9 +241,23 @@ export default function AddDealExtendedForm({ onDone }: Props) {
               <label className="text-sm">Company
                 <input name="name" className="mt-1 w-full border rounded px-2 py-1" value={form.name} onChange={handle}/>
               </label>
-              <label className="text-sm">Rep
-                <input name="account_rep" className="mt-1 w-full border rounded px-2 py-1" value={form.account_rep} onChange={handle}/>
-              </label>
+
+              {/* Rep (locked or editable) */}
+              {lockRep ? (
+                <label className="text-sm">Rep
+                  <input
+                    name="account_rep"
+                    className="mt-1 w-full border rounded px-2 py-1 bg-gray-50"
+                    value={defaultRep ?? form.account_rep}
+                    readOnly
+                  />
+                </label>
+              ) : (
+                <label className="text-sm">Rep
+                  <input name="account_rep" className="mt-1 w-full border rounded px-2 py-1" value={form.account_rep} onChange={handle}/>
+                </label>
+              )}
+
               <label className="text-sm">City
                 <input name="city" className="mt-1 w-full border rounded px-2 py-1" value={form.city} onChange={handle}/>
               </label>
@@ -321,15 +335,17 @@ export default function AddDealExtendedForm({ onDone }: Props) {
               />
             </div>
 
-            <label className="text-sm col-span-2">
-              Apply this Rep to all rows (optional)
-              <input
-                className="mt-1 w-full border rounded px-2 py-1"
-                value={defaultRep}
-                onChange={(e) => setDefaultRep(e.target.value)}
-                placeholder="e.g., Daniel Goldfinger"
-              />
-            </label>
+            {!lockRep && (
+              <label className="text-sm col-span-2">
+                Apply this Rep to all rows (optional)
+                <input
+                  className="mt-1 w-full border rounded px-2 py-1"
+                  value={defaultRepCsv}
+                  onChange={(e) => setDefaultRepCsv(e.target.value)}
+                  placeholder="e.g., Daniel Goldfinger"
+                />
+              </label>
+            )}
           </div>
 
           {parseErr && <div className="text-sm text-red-600">{parseErr}</div>}
@@ -362,7 +378,7 @@ export default function AddDealExtendedForm({ onDone }: Props) {
                       <td className="py-1 pr-2">{r.value ?? ""}</td>
                       <td className="py-1 pr-2">{r.close_date ?? ""}</td>
                       <td className="py-1 pr-2">{r.main_contact_email ?? ""}</td>
-                      <td className="py-1 pr-2">{r.account_rep ?? defaultRep}</td>
+                      <td className="py-1 pr-2">{r.account_rep ?? defaultRepCsv}</td>
                     </tr>
                   ))}
                 </tbody>
