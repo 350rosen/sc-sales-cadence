@@ -1,6 +1,6 @@
 // src/App.tsx
 import { Routes, Route, NavLink, useLocation, Navigate } from "react-router-dom";
-import { Bell, LayoutDashboard, Handshake, Users, Building2, Percent } from "lucide-react";
+import { LayoutDashboard, Handshake, Users, Building2, Percent } from "lucide-react";
 import { useState } from "react";
 
 import Dashboard from "./pages/Dashboard";

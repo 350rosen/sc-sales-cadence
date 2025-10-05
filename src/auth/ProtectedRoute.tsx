@@ -1,7 +1,7 @@
 // src/auth/ProtectedRoute.tsx
 import { useAuth } from "./AuthProvider";
 import AuthForm from "./AuthForm";
-import { useRole } from "../services/useRole";
+import { useRole, type UserRole } from "../services/useRole"; // <-- add "type UserRole"
 
 export default function ProtectedRoute({
   children,
@@ -26,11 +26,7 @@ export default function ProtectedRoute({
   }
 
   if (roles && role && !roles.includes(role)) {
-    return (
-      <div className="p-6 text-sc-delft/80">
-        You don’t have access to this page.
-      </div>
-    );
+    return <div className="p-6 text-sc-delft/80">You don’t have access to this page.</div>;
   }
 
   return <>{children}</>;
