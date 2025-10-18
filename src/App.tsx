@@ -19,6 +19,8 @@ import ProtectedRoute from "./auth/ProtectedRoute";
 import { supabase } from "./lib/supabaseClient";
 import { useRole } from "./services/useRole";
 
+import AccountManagementPage from "./pages/AccountManagementPage";
+
 /* ---------------- Fullscreen loader ---------------- */
 function FullScreenLoading() {
   return (
@@ -80,6 +82,7 @@ function TopBar() {
   const [openExport, setOpenExport] = useState(false);
   const { session } = useAuth();
   const location = useLocation();
+  const { role } = useRole();
 
   // Flicker-free: purely route-based
   const onMyDealsPage = location.pathname.startsWith("/my-deals");
@@ -104,14 +107,24 @@ function TopBar() {
         )}
 
         <div className="flex items-center gap-3">
-          {/* ... right side unchanged ... */}
           <div className="flex items-center gap-2">
             <div className="h-8 w-8 rounded-full bg-sc-delft text-white grid place-items-center">
               {(session?.user?.email ?? "U").slice(0, 1).toUpperCase()}
             </div>
+
             <span className="text-sm text-sc-delft">
               {session?.user?.email ?? "Signed in"}
             </span>
+
+            {role === "admin" && (
+              <NavLink
+                to="/account"
+                className="ml-2 text-xs text-sc-delft/70 underline hover:text-sc-green"
+              >
+                Account
+              </NavLink>
+            )}
+
             <button
               className="ml-2 text-xs text-sc-delft/70 underline hover:text-sc-orange"
               onClick={() => supabase.auth.signOut()}
@@ -163,6 +176,7 @@ function AdminAppShell() {
             <Route path="/contacts" element={<Contacts />} />
             <Route path="/companies" element={<Companies />} />
             <Route path="/commissions" element={<CommissionSchedules />} />
+            <Route path="/account" element={<AccountManagementPage />} />
           </Routes>
         </main>
       </div>
