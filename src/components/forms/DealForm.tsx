@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import Papa from "papaparse";
 import FileDropzone from "../files/FileDropzone";
 import { supabase } from "../../lib/supabaseClient";
@@ -6,9 +6,7 @@ import { Button } from "../ui";
 
 type Props = {
   onDone: () => void;
-  /** Pre-fill the Rep (also used for CSV default) */
   defaultRep?: string;
-  /** If true, hide/lock the Rep input and always use defaultRep */
   lockRep?: boolean;
 };
 
@@ -32,9 +30,11 @@ type DealInsert = {
   billing_contact_phone: string | null;
 
   invoice_number?: string | null;
+  stripe_customer_id?: string | null;
 };
 
 type CsvRow = Record<string, string>;
+type StripeCustomerLite = { id: string; name: string; email: string };
 
 const HEADERS = {
   id: "id",
@@ -69,6 +69,56 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // ---------- Stripe customer picker ----------
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [customerOptions, setCustomerOptions] = useState<StripeCustomerLite[]>([]);
+  const [customerLoading, setCustomerLoading] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<StripeCustomerLite | null>(null);
+  const [showCreateCustomer, setShowCreateCustomer] = useState(false);
+  const [newCustomerEmail, setNewCustomerEmail] = useState("");
+
+  useEffect(() => {
+    if (!customerQuery) { setCustomerOptions([]); return; }
+    const t = setTimeout(async () => {
+      setCustomerLoading(true);
+      try {
+        const res = await fetch(`/api/stripe/customers?q=${encodeURIComponent(customerQuery)}`);
+        const data: StripeCustomerLite[] = await res.json();
+        setCustomerOptions(data);
+      } catch {
+        /* noop */
+      } finally {
+        setCustomerLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [customerQuery]);
+
+  async function createStripeCustomer() {
+    setCustomerLoading(true);
+    try {
+      const res = await fetch("/api/stripe/customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.name || customerQuery || "New Customer",
+          email: newCustomerEmail || undefined,
+        }),
+      });
+      const c: StripeCustomerLite | { error?: string } = await res.json();
+      if ((c as any).error) throw new Error((c as any).error);
+      const cust = c as StripeCustomerLite;
+      setSelectedCustomer(cust);
+      setCustomerOptions([cust]);
+      setCustomerQuery(`${cust.name}${cust.email ? ` (${cust.email})` : ""}`);
+      setShowCreateCustomer(false);
+    } catch (e: any) {
+      alert(e.message || "Failed to create Stripe customer");
+    } finally {
+      setCustomerLoading(false);
+    }
+  }
+
   // ---------- Manual form ----------
   const [form, setForm] = useState({
     name: "",
@@ -90,9 +140,7 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
     billing_contact_phone: "",
   });
 
-  const handle = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
-  ) => {
+  const handle = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setForm((f) => ({ ...f, [name]: value }));
   };
@@ -100,7 +148,6 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
   async function submitManual() {
     setBusy(true);
     setErr(null);
-
     const finalRep = (defaultRep ?? form.account_rep) || null;
 
     const payload: DealInsert = {
@@ -121,6 +168,9 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
       billing_contact_title: form.billing_contact_title || null,
       billing_contact_email: form.billing_contact_email || null,
       billing_contact_phone: form.billing_contact_phone || null,
+
+      // NEW: persist the chosen Stripe customer
+      stripe_customer_id: selectedCustomer?.id ?? null,
     };
 
     const { error } = await supabase.from("deals").insert(payload);
@@ -148,7 +198,6 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
           setParseErr(res.errors[0]?.message || "CSV parse error");
           return;
         }
-
         // Ignore Drafts & Voids
         const filtered = (res.data as CsvRow[]).filter((r) => {
           const status = (r[HEADERS.status] ?? "").toLowerCase().trim();
@@ -183,6 +232,7 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
             billing_contact_title: null,
             billing_contact_email: null,
             billing_contact_phone: null,
+            stripe_customer_id: null,
           };
         });
 
@@ -234,6 +284,71 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
 
       {mode === "manual" ? (
         <>
+          {/* Stripe Customer */}
+          <div>
+            <div className="mb-2 font-medium text-sc-delft">Stripe Customer</div>
+            <input
+              className="mt-1 w-full border rounded px-2 py-1"
+              placeholder="Search name or email…"
+              value={customerQuery}
+              onChange={(e) => {
+                setCustomerQuery(e.target.value);
+                setSelectedCustomer(null);
+                setShowCreateCustomer(false);
+              }}
+            />
+            {customerLoading && <div className="text-xs text-gray-500 mt-1">Searching…</div>}
+
+            {!customerLoading && customerQuery && customerOptions.length > 0 && (
+              <ul className="border rounded mt-2 max-h-48 overflow-auto divide-y">
+                {customerOptions.map((opt) => (
+                  <li
+                    key={opt.id}
+                    className={`px-3 py-2 cursor-pointer hover:bg-gray-50 ${selectedCustomer?.id === opt.id ? "bg-gray-100" : ""}`}
+                    onClick={() => {
+                      setSelectedCustomer(opt);
+                      setCustomerQuery(`${opt.name || ""}${opt.email ? ` (${opt.email})` : ""}`);
+                    }}
+                  >
+                    <div className="text-sm font-medium">{opt.name || "(No name)"}</div>
+                    <div className="text-xs text-gray-600">{opt.email}</div>
+                    <div className="text-[10px] text-gray-400">{opt.id}</div>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {!customerLoading && customerQuery && customerOptions.length === 0 && !showCreateCustomer && (
+              <button type="button" className="mt-2 text-sm underline" onClick={() => setShowCreateCustomer(true)}>
+                Create new customer “{customerQuery}”
+              </button>
+            )}
+
+            {showCreateCustomer && (
+              <div className="mt-2 border rounded p-3 space-y-2">
+                <div className="text-sm">Create Stripe customer as “{form.name || customerQuery || "New Customer"}”</div>
+                <input
+                  className="w-full border rounded px-2 py-1"
+                  placeholder="Email (optional)"
+                  value={newCustomerEmail}
+                  onChange={(e) => setNewCustomerEmail(e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <Button onClick={createStripeCustomer} disabled={customerLoading}>
+                    {customerLoading ? "Creating…" : "Create"}
+                  </Button>
+                  <Button variant="secondary" onClick={() => setShowCreateCustomer(false)}>Cancel</Button>
+                </div>
+              </div>
+            )}
+
+            {selectedCustomer && (
+              <div className="text-xs text-green-700 mt-2">
+                Selected Stripe customer: {selectedCustomer.name || "(No name)"}{selectedCustomer.email ? ` • ${selectedCustomer.email}` : ""} ({selectedCustomer.id})
+              </div>
+            )}
+          </div>
+
           {/* Deal basics */}
           <div>
             <div className="mb-2 font-medium text-sc-delft">Deal</div>
@@ -242,15 +357,9 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
                 <input name="name" className="mt-1 w-full border rounded px-2 py-1" value={form.name} onChange={handle}/>
               </label>
 
-              {/* Rep (locked or editable) */}
               {lockRep ? (
                 <label className="text-sm">Rep
-                  <input
-                    name="account_rep"
-                    className="mt-1 w-full border rounded px-2 py-1 bg-gray-50"
-                    value={defaultRep ?? form.account_rep}
-                    readOnly
-                  />
+                  <input name="account_rep" className="mt-1 w-full border rounded px-2 py-1 bg-gray-50" value={defaultRep ?? form.account_rep} readOnly/>
                 </label>
               ) : (
                 <label className="text-sm">Rep
