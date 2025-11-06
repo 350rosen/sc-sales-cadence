@@ -4,28 +4,30 @@ import FileDropzone from "../files/FileDropzone";
 import { supabase } from "../../lib/supabaseClient";
 import { Button } from "../ui";
 
+/* ---------------- Types ---------------- */
+
 type Props = {
   onDone: () => void;
-  defaultRep?: string;
-  lockRep?: boolean;
+  defaultRep?: string;   // header rep default
+  lockRep?: boolean;     // lock the rep selector
 };
 
 type DealInsert = {
-  name: string | null;
-  city: string | null;
-  state: string | null;
+  name: string | null; // company (derived from Stripe; not shown as input)
+  city: string | null; // derived; not input
+  state: string | null; // derived; not input
   account_rep: string | null;
   value: number | null;
   stage: "paid" | "unpaid" | null;
   close_date: string | null;
 
   main_contact: string | null;
-  main_contact_title: string | null;
+  main_contact_title: string | null; // we won’t show in UI
   main_contact_email: string | null;
   main_contact_phone: string | null;
 
   billing_contact_name: string | null;
-  billing_contact_title: string | null;
+  billing_contact_title: string | null; // we won’t show in UI
   billing_contact_email: string | null;
   billing_contact_phone: string | null;
 
@@ -35,6 +37,25 @@ type DealInsert = {
 
 type CsvRow = Record<string, string>;
 type StripeCustomerLite = { id: string; name: string; email: string };
+
+type StripeAddr = {
+  line1?: string | null;
+  line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+} | null;
+
+type StripeCustomerFull = {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string | null;
+  address?: StripeAddr;
+  shipping?: { name?: string | null; phone?: string | null; address?: StripeAddr } | null;
+  billing_details?: { name?: string | null; email?: string | null; phone?: string | null; address?: StripeAddr } | null;
+};
 
 const HEADERS = {
   id: "id",
@@ -52,6 +73,8 @@ const HEADERS = {
   voidedAt: "Voided At (UTC)",
 } as const;
 
+/* ---------------- Utils ---------------- */
+
 const toNumber = (v: unknown): number | null => {
   if (v == null) return null;
   const n = Number(String(v).replace(/[^0-9.\-]/g, ""));
@@ -64,62 +87,58 @@ const toDateYYYYMMDD = (v?: string): string | null => {
 };
 const truthy = (v?: string) => /^(true|1|yes)$/i.test(String(v ?? "").trim());
 
+function preferAddress(c: StripeCustomerFull): StripeAddr {
+  return c.shipping?.address ?? c.address ?? c.billing_details?.address ?? null;
+}
+
+function deriveFromStripe(c: StripeCustomerFull) {
+  const mainName  = c.shipping?.name || c.name || "";
+  const mainEmail = c.email || "";
+  const mainPhone = c.shipping?.phone || c.phone || "";
+
+  const bestAddr = preferAddress(c);
+  const city  = bestAddr?.city ?? "";
+  const state = bestAddr?.state ?? "";
+  const postal = bestAddr?.postal_code ?? "";
+  const line1 = bestAddr?.line1 ?? "";
+  const line2 = bestAddr?.line2 ?? "";
+
+  const b = c.billing_details;
+  const billingName  = b?.name  || mainName;
+  const billingEmail = b?.email || mainEmail;
+  const billingPhone = b?.phone || mainPhone;
+
+  return {
+    companyName: c.name || mainName,
+    addressLines: { line1, line2, city, state, postal },
+    main:    { name: mainName,    email: mainEmail,    phone: mainPhone },
+    billing: { name: billingName, email: billingEmail, phone: billingPhone },
+  };
+}
+
+/* ---------------- Component ---------------- */
+
 export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Props) {
-  const [mode, setMode] = useState<"manual" | "csv">("csv");
+  const [mode, setMode] = useState<"manual" | "csv">("manual");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // ---------- Stripe customer picker ----------
+  // Stripe customer lookup
   const [customerQuery, setCustomerQuery] = useState("");
   const [customerOptions, setCustomerOptions] = useState<StripeCustomerLite[]>([]);
   const [customerLoading, setCustomerLoading] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<StripeCustomerLite | null>(null);
+  const [selectedCustomerFull, setSelectedCustomerFull] = useState<StripeCustomerFull | null>(null);
   const [showCreateCustomer, setShowCreateCustomer] = useState(false);
   const [newCustomerEmail, setNewCustomerEmail] = useState("");
 
-  useEffect(() => {
-    if (!customerQuery) { setCustomerOptions([]); return; }
-    const t = setTimeout(async () => {
-      setCustomerLoading(true);
-      try {
-        const res = await fetch(`/api/stripe/customers?q=${encodeURIComponent(customerQuery)}`);
-        const data: StripeCustomerLite[] = await res.json();
-        setCustomerOptions(data);
-      } catch {
-        /* noop */
-      } finally {
-        setCustomerLoading(false);
-      }
-    }, 300);
-    return () => clearTimeout(t);
-  }, [customerQuery]);
+  // Rep options
+  const [repOptions, setRepOptions] = useState<string[]>([]);
 
-  async function createStripeCustomer() {
-    setCustomerLoading(true);
-    try {
-      const res = await fetch("/api/stripe/customers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: form.name || customerQuery || "New Customer",
-          email: newCustomerEmail || undefined,
-        }),
-      });
-      const c: StripeCustomerLite | { error?: string } = await res.json();
-      if ((c as any).error) throw new Error((c as any).error);
-      const cust = c as StripeCustomerLite;
-      setSelectedCustomer(cust);
-      setCustomerOptions([cust]);
-      setCustomerQuery(`${cust.name}${cust.email ? ` (${cust.email})` : ""}`);
-      setShowCreateCustomer(false);
-    } catch (e: any) {
-      alert(e.message || "Failed to create Stripe customer");
-    } finally {
-      setCustomerLoading(false);
-    }
-  }
+  // Billing “is different”
+  const [billingDifferent, setBillingDifferent] = useState(false);
 
-  // ---------- Manual form ----------
+  // Form state
   const [form, setForm] = useState({
     name: "",
     city: "",
@@ -140,36 +159,163 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
     billing_contact_phone: "",
   });
 
+  // Address display (read-only)
+  const [addrDisplay, setAddrDisplay] = useState<{ line1?: string; line2?: string; city?: string; state?: string; postal?: string } | null>(null);
+
+  /* ----- Effects ----- */
+
+  // Load rep options: first try `reps` table, else distinct from deals
+  useEffect(() => {
+    (async () => {
+      let reps: string[] = [];
+      // Try a `reps` table (name column)
+      const { data: r1 } = await supabase.from("reps").select("name").order("name", { ascending: true });
+      if (r1 && r1.length) {
+        reps = r1.map(x => x.name).filter(Boolean);
+      } else {
+        // Fallback: distinct reps from deals
+        const { data: r2 } = await supabase
+          .from("deals")
+          .select("account_rep")
+          .not("account_rep", "is", null)
+          .order("account_rep", { ascending: true });
+        if (r2 && r2.length) {
+          const set = new Set<string>();
+          for (const row of r2) if (row.account_rep) set.add(row.account_rep);
+          reps = Array.from(set.values());
+        }
+      }
+      setRepOptions(reps);
+      // default selection from header if provided
+      if (defaultRep && !form.account_rep) {
+        setForm(f => ({ ...f, account_rep: defaultRep }));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep form.account_rep synced to incoming header default if it changes
+  useEffect(() => {
+    if (defaultRep && form.account_rep !== defaultRep) {
+      setForm(f => ({ ...f, account_rep: defaultRep }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultRep]);
+
+  // Search Stripe customers
+  useEffect(() => {
+    if (!customerQuery) { setCustomerOptions([]); return; }
+    const t = setTimeout(async () => {
+      setCustomerLoading(true);
+      try {
+        const res = await fetch(`/api/stripe/customers?q=${encodeURIComponent(customerQuery)}`);
+        const data: StripeCustomerLite[] = await res.json();
+        setCustomerOptions(data);
+      } finally {
+        setCustomerLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [customerQuery]);
+
+  /* ----- Handlers ----- */
+
   const handle = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setForm((f) => ({ ...f, [name]: value }));
   };
 
+  async function handleSelectCustomer(opt: StripeCustomerLite) {
+    try {
+      const res = await fetch(`/api/stripe/customers?id=${opt.id}`);
+      const full: StripeCustomerFull = await res.json();
+      setSelectedCustomerFull(full);
+
+      const d = deriveFromStripe(full);
+
+      setAddrDisplay(d.addressLines);
+
+      setForm((f) => ({
+        ...f,
+        // company + geo stored, but not editable inputs
+        name: d.companyName || f.name,
+        city: d.addressLines.city || f.city,
+        state: d.addressLines.state || f.state,
+
+        // rep defaults to header; can be changed via dropdown (unless lockRep)
+        account_rep: defaultRep ?? f.account_rep,
+
+        // lock unpaid
+        stage: "unpaid",
+
+        // main contact (editable)
+        main_contact:       d.main.name  || f.main_contact,
+        main_contact_title: f.main_contact_title,
+        main_contact_email: d.main.email || f.main_contact_email,
+        main_contact_phone: d.main.phone || f.main_contact_phone,
+
+        // prefill billing (user can override if “different”)
+        billing_contact_name:  d.billing.name  || f.billing_contact_name,
+        billing_contact_title: f.billing_contact_title,
+        billing_contact_email: d.billing.email || f.billing_contact_email,
+        billing_contact_phone: d.billing.phone || f.billing_contact_phone,
+      }));
+    } catch (e) {
+      console.error("Failed to prefill from Stripe:", e);
+    }
+  }
+
+  // Create (simple) Stripe customer — unchanged from your prior flow
+  async function createStripeCustomer() {
+    setCustomerLoading(true);
+    try {
+      const res = await fetch("/api/stripe/customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.name || customerQuery || "New Customer",
+          email: newCustomerEmail || undefined,
+        }),
+      });
+      const c: StripeCustomerLite | { error?: string } = await res.json();
+      if ((c as any).error) throw new Error((c as any).error);
+      const cust = c as StripeCustomerLite;
+      setSelectedCustomer(cust);
+      setCustomerOptions([cust]);
+      setCustomerQuery(`${cust.name}${cust.email ? ` (${cust.email})` : ""}`);
+      setShowCreateCustomer(false);
+      await handleSelectCustomer(cust);
+    } catch (e: any) {
+      alert(e.message || "Failed to create Stripe customer");
+    } finally {
+      setCustomerLoading(false);
+    }
+  }
+
   async function submitManual() {
     setBusy(true);
     setErr(null);
-    const finalRep = (defaultRep ?? form.account_rep) || null;
 
     const payload: DealInsert = {
       name: form.name || null,
       city: form.city || null,
       state: form.state || null,
-      account_rep: finalRep,
+      account_rep: form.account_rep || defaultRep || null,
       value: form.value ? Number(form.value) : null,
-      stage: form.stage || null,
+      stage: "unpaid",
       close_date: form.close_date || null,
 
       main_contact: form.main_contact || null,
-      main_contact_title: form.main_contact_title || null,
+      main_contact_title: null, // not used
       main_contact_email: form.main_contact_email || null,
       main_contact_phone: form.main_contact_phone || null,
 
-      billing_contact_name: form.billing_contact_name || null,
-      billing_contact_title: form.billing_contact_title || null,
-      billing_contact_email: form.billing_contact_email || null,
-      billing_contact_phone: form.billing_contact_phone || null,
+      // if not different, we store nulls for distinct billing contact
+      billing_contact_name:  billingDifferent ? (form.billing_contact_name  || null) : null,
+      billing_contact_title: null,
+      billing_contact_email: billingDifferent ? (form.billing_contact_email || null) : null,
+      billing_contact_phone: billingDifferent ? (form.billing_contact_phone || null) : null,
 
-      // NEW: persist the chosen Stripe customer
       stripe_customer_id: selectedCustomer?.id ?? null,
     };
 
@@ -179,11 +325,11 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
     else onDone();
   }
 
-  // ---------- CSV mode ----------
+  /* ---------------- CSV Mode (unchanged) ---------------- */
+
   const [defaultRepCsv, setDefaultRepCsv] = useState(defaultRep ?? "");
   const [csvRows, setCsvRows] = useState<DealInsert[]>([]);
   const [parseErr, setParseErr] = useState<string | null>(null);
-
   const canImport = useMemo(() => csvRows.length > 0 && !busy, [csvRows, busy]);
 
   function parseCsvFile(file: File) {
@@ -198,35 +344,30 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
           setParseErr(res.errors[0]?.message || "CSV parse error");
           return;
         }
-        // Ignore Drafts & Voids
         const filtered = (res.data as CsvRow[]).filter((r) => {
-          const status = (r[HEADERS.status] ?? "").toLowerCase().trim();
+          const status = (r["Status"] ?? "").toLowerCase().trim();
           const isDraft = status.includes("draft");
           const isVoidedByStatus = status === "void" || status === "voided" || status.includes("void");
-          const isVoidedByField = !!String(r[HEADERS.voidedAt] ?? "").trim();
+          const isVoidedByField = !!String(r["Voided At (UTC)"] ?? "").trim();
           return !(isDraft || isVoidedByStatus || isVoidedByField);
         });
 
         const mapped: DealInsert[] = filtered.map((r) => {
-          const paid = truthy(r[HEADERS.paid]);
-          const name =
-            r[HEADERS.customerName]?.trim() ||
-            r[HEADERS.customer]?.trim() ||
-            "";
-          const value = toNumber(r[HEADERS.total]) ?? toNumber(r[HEADERS.amountDue]);
-
+          const paid = truthy(r["Paid"]);
+          const name = r["Customer Name"]?.trim() || r["Customer"]?.trim() || "";
+          const value = toNumber(r["Total"]) ?? toNumber(r["Amount Due"]);
           return {
-            invoice_number: r[HEADERS.invoiceNumber]?.trim() || null,
+            invoice_number: r["Number"]?.trim() || null,
             name: name || null,
-            city: r[HEADERS.city]?.trim() || null,
-            state: r[HEADERS.state]?.trim() || null,
+            city: r["Customer Address City"]?.trim() || null,
+            state: r["Customer Address State"]?.trim() || null,
             account_rep: defaultRepCsv ? defaultRepCsv : null,
             value,
             stage: paid ? "paid" : "unpaid",
-            close_date: toDateYYYYMMDD(r[HEADERS.dateUtc]),
+            close_date: toDateYYYYMMDD(r["Date (UTC)"]),
             main_contact: null,
             main_contact_title: null,
-            main_contact_email: r[HEADERS.customerEmail]?.trim() || null,
+            main_contact_email: r["Customer Email"]?.trim() || null,
             main_contact_phone: null,
             billing_contact_name: null,
             billing_contact_title: null,
@@ -236,9 +377,7 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
           };
         });
 
-        const clean = mapped.filter(
-          (d) => (d.name && d.name !== "") || (d.value != null && d.value > 0)
-        );
+        const clean = mapped.filter((d) => (d.name && d.name !== "") || (d.value != null && d.value > 0));
         setCsvRows(clean);
       },
       error: (e) => setParseErr(e.message || "CSV parse error"),
@@ -249,12 +388,10 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
     if (csvRows.length === 0) return;
     setBusy(true);
     setErr(null);
-
     const rows = csvRows.map((r) => ({
       ...r,
       account_rep: r.account_rep || (defaultRepCsv ? defaultRepCsv : null),
     }));
-
     const chunkSize = 500;
     for (let i = 0; i < rows.length; i += chunkSize) {
       const slice = rows.slice(i, i + chunkSize);
@@ -265,21 +402,20 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
         return;
       }
     }
-
     setBusy(false);
     onDone();
   }
+
+  /* ---------------- Render ---------------- */
+
+  const readyForDealEntry = !!selectedCustomer;
 
   return (
     <div className="space-y-4">
       {/* Mode toggle */}
       <div className="flex gap-2">
-        <Button variant={mode === "manual" ? "primary" : "secondary"} onClick={() => setMode("manual")}>
-          Manual
-        </Button>
-        <Button variant={mode === "csv" ? "primary" : "secondary"} onClick={() => setMode("csv")}>
-          CSV Upload
-        </Button>
+        <Button variant={mode === "manual" ? "primary" : "secondary"} onClick={() => setMode("manual")}>Manual</Button>
+        <Button variant={mode === "csv" ? "primary" : "secondary"} onClick={() => setMode("csv")}>CSV Upload</Button>
       </div>
 
       {mode === "manual" ? (
@@ -294,7 +430,9 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
               onChange={(e) => {
                 setCustomerQuery(e.target.value);
                 setSelectedCustomer(null);
+                setSelectedCustomerFull(null);
                 setShowCreateCustomer(false);
+                setAddrDisplay(null);
               }}
             />
             {customerLoading && <div className="text-xs text-gray-500 mt-1">Searching…</div>}
@@ -305,9 +443,10 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
                   <li
                     key={opt.id}
                     className={`px-3 py-2 cursor-pointer hover:bg-gray-50 ${selectedCustomer?.id === opt.id ? "bg-gray-100" : ""}`}
-                    onClick={() => {
+                    onClick={async () => {
                       setSelectedCustomer(opt);
                       setCustomerQuery(`${opt.name || ""}${opt.email ? ` (${opt.email})` : ""}`);
+                      await handleSelectCustomer(opt);
                     }}
                   >
                     <div className="text-sm font-medium">{opt.name || "(No name)"}</div>
@@ -326,10 +465,11 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
 
             {showCreateCustomer && (
               <div className="mt-2 border rounded p-3 space-y-2">
-                <div className="text-sm">Create Stripe customer as “{form.name || customerQuery || "New Customer"}”</div>
+                <div className="text-sm">Create Stripe customer as “{customerQuery || "New Customer"}”</div>
                 <input
                   className="w-full border rounded px-2 py-1"
-                  placeholder="Email (optional)"
+                  placeholder="Account email"
+                  type="email"
                   value={newCustomerEmail}
                   onChange={(e) => setNewCustomerEmail(e.target.value)}
                 />
@@ -347,90 +487,117 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
                 Selected Stripe customer: {selectedCustomer.name || "(No name)"}{selectedCustomer.email ? ` • ${selectedCustomer.email}` : ""} ({selectedCustomer.id})
               </div>
             )}
-          </div>
 
-          {/* Deal basics */}
-          <div>
-            <div className="mb-2 font-medium text-sc-delft">Deal</div>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="text-sm">Company
-                <input name="name" className="mt-1 w-full border rounded px-2 py-1" value={form.name} onChange={handle}/>
-              </label>
+            {/* Read-only address (from Stripe) */}
+            {readyForDealEntry && addrDisplay && (
+              <div className="mt-2 text-sm text-gray-800 space-y-0.5">
+                {addrDisplay.line1 && <div>{addrDisplay.line1}</div>}
+                {addrDisplay.line2 && <div>{addrDisplay.line2}</div>}
+                {(addrDisplay.city || addrDisplay.state || addrDisplay.postal) && (
+                  <div>
+                    {addrDisplay.city ? `${addrDisplay.city}, ` : ""}
+                    {addrDisplay.state || ""}
+                    {addrDisplay.postal ? ` ${addrDisplay.postal}` : ""}
+                  </div>
+                )}
+              </div>
+            )}
 
-              {lockRep ? (
+            {/* Rep dropdown (under the green text & address) */}
+            {readyForDealEntry && (
+              <div className="mt-3">
                 <label className="text-sm">Rep
-                  <input name="account_rep" className="mt-1 w-full border rounded px-2 py-1 bg-gray-50" value={defaultRep ?? form.account_rep} readOnly/>
+                  <select
+                    name="account_rep"
+                    className={`mt-1 w-full border rounded px-2 py-1 ${lockRep ? "bg-gray-50" : ""}`}
+                    value={form.account_rep}
+                    onChange={handle}
+                    disabled={!!lockRep}
+                  >
+                    <option value="">Select a rep…</option>
+                    {repOptions.map((r) => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
                 </label>
-              ) : (
-                <label className="text-sm">Rep
-                  <input name="account_rep" className="mt-1 w-full border rounded px-2 py-1" value={form.account_rep} onChange={handle}/>
+              </div>
+            )}
+          </div>
+
+          {/* Gate the rest until a customer is selected */}
+          {readyForDealEntry && (
+            <>
+              {/* Deal (Value / Stage / Close Date) */}
+              <div>
+                <div className="mb-2 font-medium text-sc-delft">Deal</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="text-sm">Value (USD)
+                    <input name="value" type="number" min="0" className="mt-1 w-full border rounded px-2 py-1" value={form.value} onChange={handle}/>
+                  </label>
+                  <label className="text-sm">Stage
+                    <select name="stage" className="mt-1 w-full border rounded px-2 py-1 bg-gray-50" value="unpaid" disabled>
+                      <option value="unpaid">Unpaid</option>
+                    </select>
+                  </label>
+                  <label className="text-sm col-span-2">Close Date
+                    <input name="close_date" type="date" className="mt-1 w-full border rounded px-2 py-1" value={form.close_date} onChange={handle}/>
+                  </label>
+                </div>
+              </div>
+
+              {/* Main Contact (editable) */}
+              <div>
+                <div className="mb-2 font-medium text-sc-delft">Main Contact</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="text-sm">Name
+                    <input name="main_contact" className="mt-1 w-full border rounded px-2 py-1" value={form.main_contact} onChange={handle}/>
+                  </label>
+                  <label className="text-sm">Email
+                    <input name="main_contact_email" type="email" className="mt-1 w-full border rounded px-2 py-1" value={form.main_contact_email} onChange={handle}/>
+                  </label>
+                  <label className="text-sm">Phone
+                    <input name="main_contact_phone" className="mt-1 w-full border rounded px-2 py-1" value={form.main_contact_phone} onChange={handle}/>
+                  </label>
+                </div>
+              </div>
+
+              {/* Billing contact toggle + fields */}
+              <div>
+                <div className="mb-2 font-medium text-sc-delft">Billing Contact</div>
+                <label className="flex items-center gap-2 text-sm mb-2">
+                  <input
+                    type="checkbox"
+                    checked={billingDifferent}
+                    onChange={(e) => setBillingDifferent(e.target.checked)}
+                  />
+                  Billing contact is different
                 </label>
-              )}
 
-              <label className="text-sm">City
-                <input name="city" className="mt-1 w-full border rounded px-2 py-1" value={form.city} onChange={handle}/>
-              </label>
-              <label className="text-sm">State
-                <input name="state" className="mt-1 w-full border rounded px-2 py-1" value={form.state} onChange={handle}/>
-              </label>
-              <label className="text-sm">Value (USD)
-                <input name="value" type="number" min="0" className="mt-1 w-full border rounded px-2 py-1" value={form.value} onChange={handle}/>
-              </label>
-              <label className="text-sm">Stage
-                <select name="stage" className="mt-1 w-full border rounded px-2 py-1" value={form.stage} onChange={handle}>
-                  <option value="unpaid">Unpaid</option>
-                  <option value="paid">Paid</option>
-                </select>
-              </label>
-              <label className="text-sm col-span-2">Close Date
-                <input name="close_date" type="date" className="mt-1 w-full border rounded px-2 py-1" value={form.close_date} onChange={handle}/>
-              </label>
-            </div>
-          </div>
+                {billingDifferent && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="text-sm">Name
+                      <input name="billing_contact_name" className="mt-1 w-full border rounded px-2 py-1"
+                             value={form.billing_contact_name} onChange={handle}/>
+                    </label>
+                    <label className="text-sm">Email
+                      <input name="billing_contact_email" type="email" className="mt-1 w-full border rounded px-2 py-1"
+                             value={form.billing_contact_email} onChange={handle}/>
+                    </label>
+                    <label className="text-sm">Phone
+                      <input name="billing_contact_phone" className="mt-1 w-full border rounded px-2 py-1"
+                             value={form.billing_contact_phone} onChange={handle}/>
+                    </label>
+                  </div>
+                )}
+              </div>
 
-          {/* Main contact */}
-          <div>
-            <div className="mb-2 font-medium text-sc-delft">Main Contact</div>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="text-sm">Name
-                <input name="main_contact" className="mt-1 w-full border rounded px-2 py-1" value={form.main_contact} onChange={handle}/>
-              </label>
-              <label className="text-sm">Title
-                <input name="main_contact_title" className="mt-1 w-full border rounded px-2 py-1" value={form.main_contact_title} onChange={handle}/>
-              </label>
-              <label className="text-sm">Email
-                <input name="main_contact_email" type="email" className="mt-1 w-full border rounded px-2 py-1" value={form.main_contact_email} onChange={handle}/>
-              </label>
-              <label className="text-sm">Phone
-                <input name="main_contact_phone" className="mt-1 w-full border rounded px-2 py-1" value={form.main_contact_phone} onChange={handle}/>
-              </label>
-            </div>
-          </div>
-
-          {/* Billing contact */}
-          <div>
-            <div className="mb-2 font-medium text-sc-delft">Billing Contact</div>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="text-sm">Name
-                <input name="billing_contact_name" className="mt-1 w-full border rounded px-2 py-1" value={form.billing_contact_name} onChange={handle}/>
-              </label>
-              <label className="text-sm">Title
-                <input name="billing_contact_title" className="mt-1 w-full border rounded px-2 py-1" value={form.billing_contact_title} onChange={handle}/>
-              </label>
-              <label className="text-sm">Email
-                <input name="billing_contact_email" type="email" className="mt-1 w-full border rounded px-2 py-1" value={form.billing_contact_email} onChange={handle}/>
-              </label>
-              <label className="text-sm">Phone
-                <input name="billing_contact_phone" className="mt-1 w-full border rounded px-2 py-1" value={form.billing_contact_phone} onChange={handle}/>
-              </label>
-            </div>
-          </div>
-
-          {err && <div className="text-sm text-red-600">{err}</div>}
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={onDone}>Cancel</Button>
-            <Button onClick={submitManual} disabled={busy}>{busy ? "Saving…" : "Save Deal"}</Button>
-          </div>
+              {err && <div className="text-sm text-red-600">{err}</div>}
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" onClick={onDone}>Close</Button>
+                <Button onClick={submitManual} disabled={busy}>{busy ? "Saving…" : "Save Deal"}</Button>
+              </div>
+            </>
+          )}
         </>
       ) : (
         <>
@@ -443,7 +610,6 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
                 help="Drag & drop or click to browse. Accepted: .csv (Stripe export)."
               />
             </div>
-
             {!lockRep && (
               <label className="text-sm col-span-2">
                 Apply this Rep to all rows (optional)
@@ -496,9 +662,8 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
           )}
 
           {err && <div className="text-sm text-red-600">{err}</div>}
-
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={onDone}>Cancel</Button>
+            <Button variant="secondary" onClick={onDone}>Close</Button>
             <Button onClick={importCsv} disabled={!canImport}>
               {busy ? "Importing…" : `Import ${csvRows.length} Deal${csvRows.length === 1 ? "" : "s"}`}
             </Button>
