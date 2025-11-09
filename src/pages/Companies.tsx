@@ -194,32 +194,27 @@ export default function Companies() {
 
   // fetch invoice numbers in parallel and attach to deals
   async function attachInvoiceNumbers(deals: DealRow[]): Promise<DealRow[]> {
-    // Collect unique invoice_ids
-    const ids = Array.from(new Set(deals.map((d) => d.invoice_id).filter(Boolean))) as string[];
-    if (ids.length === 0) return deals;
+  const needs = deals.filter(d => !d.invoice_number && d.invoice_id).map(d => d.invoice_id!) ;
+  const ids = Array.from(new Set(needs));
+  if (!ids.length) return deals;
 
-    // Fetch all numbers
-    const pairs = await Promise.all(
-      ids.map(async (id) => {
-        try {
-          const r = await fetch(`/api/stripe/invoice?id=${id}`);
-          if (!r.ok) throw new Error("bad response");
-          const inv = await r.json();
-          return [id, inv.number as string | null] as const;
-        } catch {
-          return [id, null] as const;
-        }
-      })
-    );
+  const pairs = await Promise.all(ids.map(async (id) => {
+    try {
+      const r = await fetch(`/api/stripe/invoice?id=${id}`);
+      const inv = await r.json();
+      return [id, inv?.number ?? null] as const;
+    } catch {
+      return [id, null] as const;
+    }
+  }));
 
-    const map = new Map<string, string | null>(pairs);
+  const map = new Map<string, string | null>(pairs);
+  return deals.map(d => d.invoice_number
+    ? d
+    : ({ ...d, invoice_number: d.invoice_id ? map.get(d.invoice_id) ?? null : null })
+  );
+}
 
-    // Attach invoice_number
-    return deals.map((d) => ({
-      ...d,
-      invoice_number: d.invoice_id ? map.get(d.invoice_id) ?? null : null,
-    }));
-  }
 
   async function loadCompanyDeals(c: CompanyCard) {
     setLoadingDeals(true);
