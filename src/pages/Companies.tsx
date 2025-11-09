@@ -417,7 +417,17 @@ export default function Companies() {
                     <tr key={d.id} className="border-t border-sc-delft/10">
                       <td className="px-4 py-2 font-mono text-xs">{d.id}</td>
                       <td className="px-4 py-2 font-mono text-xs">{d.invoice_number ?? "—"}</td>
-                      <td className="px-4 py-2">{d.stage ?? "—"}</td>
+                      <td className="px-4 py-2">
+                           <span
+                          className={`inline-block rounded-full px-2 py-0.5 text-xs ${
+                            (d.stage ?? "").toLowerCase() === "paid"
+                              ? "bg-sc-lightgreen/20 text-sc-green"
+                              : "bg-sc-orange/20 text-sc-orange"
+                          }`}
+                        >
+                          {d.stage ?? "—"}
+                        </span>
+                      </td>
                       <td className="px-4 py-2 text-right">
                         {d.value != null ? `$${d.value.toLocaleString()}` : "—"}
                       </td>
