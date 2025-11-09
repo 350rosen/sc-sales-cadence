@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
-export type UserRole = "admin" | "rep" | "unknown";
+export type UserRole = "admin" | "rep" | "sdev" | "unknown";
 
 type Profile = {
   id: string;

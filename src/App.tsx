@@ -1,4 +1,4 @@
-import { Routes, Route, NavLink, useLocation, Navigate } from "react-router-dom";
+import { Routes, Route, NavLink, Navigate } from "react-router-dom";
 import { LayoutDashboard, Handshake, Users, Building2, Percent, Mail } from "lucide-react";
 import { useState } from "react";
 
