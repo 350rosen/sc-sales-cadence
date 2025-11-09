@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
-import { Card, Button, Input, Select } from "../components/ui"; // assumes you have these; swap as needed
+import { Card, Button } from "../components/ui";
 
 type DealRow = {
   id: string;
@@ -360,49 +360,82 @@ export default function Companies() {
         {/* Filters */}
         <Card className="p-4">
           <div className="grid md:grid-cols-5 gap-3 items-end">
+            {/* Stage */}
             <div className="flex flex-col">
               <label className="text-xs text-sc-delft/60 mb-1">Stage</label>
-              <Select value={stageFilter} onValueChange={(v:any) => setStageFilter(v)}>
-                <Select.Trigger><Select.Value /></Select.Trigger>
-                <Select.Content>
-                  <Select.Item value="all">All</Select.Item>
-                  <Select.Item value="open">Open</Select.Item>
-                  <Select.Item value="paid">Paid</Select.Item>
-                </Select.Content>
-              </Select>
+              <select
+                className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm"
+                value={stageFilter}
+                onChange={(e) => setStageFilter(e.target.value as "all" | "open" | "paid")}
+              >
+                <option value="all">All</option>
+                <option value="open">Open</option>
+                <option value="paid">Paid</option>
+              </select>
             </div>
 
+            {/* Rep */}
             <div className="flex flex-col">
               <label className="text-xs text-sc-delft/60 mb-1">Rep</label>
-              <Select value={repFilter} onValueChange={(v:any) => setRepFilter(v)}>
-                <Select.Trigger><Select.Value /></Select.Trigger>
-                <Select.Content>
-                  {repOptions.map(r => <Select.Item key={r} value={r}>{r}</Select.Item>)}
-                </Select.Content>
-              </Select>
+              <select
+                className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm"
+                value={repFilter}
+                onChange={(e) => setRepFilter(e.target.value)}
+              >
+                {repOptions.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
             </div>
 
+            {/* Min / Max Value */}
             <div className="flex flex-col">
               <label className="text-xs text-sc-delft/60 mb-1">Min Value</label>
-              <Input inputMode="numeric" value={minValue} onChange={e=>setMinValue(e.target.value)} placeholder="0" />
+              <input
+                inputMode="numeric"
+                className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm"
+                value={minValue}
+                onChange={(e) => setMinValue(e.target.value)}
+                placeholder="0"
+              />
             </div>
             <div className="flex flex-col">
               <label className="text-xs text-sc-delft/60 mb-1">Max Value</label>
-              <Input inputMode="numeric" value={maxValue} onChange={e=>setMaxValue(e.target.value)} placeholder="100000" />
+              <input
+                inputMode="numeric"
+                className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm"
+                value={maxValue}
+                onChange={(e) => setMaxValue(e.target.value)}
+                placeholder="100000"
+              />
             </div>
 
+            {/* Dates */}
             <div className="grid grid-cols-2 gap-2">
               <div className="flex flex-col">
                 <label className="text-xs text-sc-delft/60 mb-1">Start</label>
-                <Input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} />
+                <input
+                  type="date"
+                  className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                />
               </div>
               <div className="flex flex-col">
                 <label className="text-xs text-sc-delft/60 mb-1">End</label>
-                <Input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} />
+                <input
+                  type="date"
+                  className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                />
               </div>
             </div>
           </div>
         </Card>
+
 
         {/* Deals table */}
         <Card className="p-0 overflow-hidden">
