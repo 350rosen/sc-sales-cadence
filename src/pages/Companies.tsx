@@ -12,6 +12,7 @@ type DealRow = {
   close_date: string | null;
   value?: number | null;        // add if present in your schema
   stripe_customer_id?: string | null;
+  invoice_id?: string | null;
 };
 
 type CompanyCard = {
