@@ -10,9 +10,10 @@ type DealRow = {
   stage: string | null;         // 'paid' | 'open' | etc.
   account_rep: string | null;
   close_date: string | null;
-  value?: number | null;        // add if present in your schema
+  value?: number | null;
   stripe_customer_id?: string | null;
-  invoice_number?: string | null;
+  invoice_id?: string | null;        // <-- added
+  invoice_number?: string | null;    // <-- filled client-side
 };
 
 type CompanyCard = {
@@ -49,24 +50,16 @@ type StripeCustomer = {
   invoice_settings?: {
     default_payment_method?: {
       id: string;
-      card?: {
-        brand?: string | null;
-        last4?: string | null;
-        exp_month?: number | null;
-        exp_year?: number | null;
-      } | null;
+      card?: { brand?: string | null; last4?: string | null; exp_month?: number | null; exp_year?: number | null } | null;
       type?: string | null;
     } | string | null;
   } | null;
   preferred_locales?: string[] | null;
   tax_exempt?: "none" | "exempt" | "reverse";
   tax_ids?: { data?: Array<{ id: string; type: string; value: string }> } | null;
-  discount?: {
-    coupon?: { id: string; name?: string | null; percent_off?: number | null; amount_off?: number | null; duration?: string | null } | null;
-  } | null;
+  discount?: { coupon?: { id: string; name?: string | null; percent_off?: number | null; amount_off?: number | null; duration?: string | null } | null } | null;
   cash_balance?: { settings?: { reconciliation_mode?: string | null } } | null;
   metadata?: Record<string, string>;
-  // add fields you expand in your API route as needed
 };
 
 export default function Companies() {
@@ -87,9 +80,9 @@ export default function Companies() {
   // filters
   const [stageFilter, setStageFilter] = useState<"all" | "open" | "paid">("all");
   const [repFilter, setRepFilter] = useState<string>("all");
-  const [minValue, setMinValue] = useState<string>(""); // strings for inputs
+  const [minValue, setMinValue] = useState<string>("");
   const [maxValue, setMaxValue] = useState<string>("");
-  const [startDate, setStartDate] = useState<string>(""); // YYYY-MM-DD
+  const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
 
   // -------- load base deals --------
@@ -97,7 +90,7 @@ export default function Companies() {
     (async () => {
       const { data, error } = await supabase
         .from("deals")
-        .select("id, name, city, state, stage, account_rep, close_date, value, stripe_customer_id")
+        .select("id, name, city, state, stage, account_rep, close_date, value, stripe_customer_id, invoice_id") // <-- include invoice_id
         .returns<DealRow[]>();
 
       if (error) {
@@ -116,10 +109,7 @@ export default function Companies() {
 
   // -------- aggregate companies --------
   useEffect(() => {
-    const map = new Map<
-      string,
-      CompanyCard & { _repCounts: Record<string, number>, _stripeId?: string | null }
-    >();
+    const map = new Map<string, CompanyCard & { _repCounts: Record<string, number>; _stripeId?: string | null }>();
 
     for (const r of rows) {
       const name = r.name ?? "Unknown Company";
@@ -155,7 +145,6 @@ export default function Companies() {
         if (!current || cd > current) agg.lastActivity = r.close_date;
       }
 
-      // prefer a non-null stripe id if present anywhere
       if (r.stripe_customer_id) agg._stripeId = r.stripe_customer_id;
     }
 
@@ -186,13 +175,14 @@ export default function Companies() {
     setCompanies(out);
   }, [rows]);
 
-  // -------- helpers: load stripe + deals for selected --------
+  // -------- helpers --------
   async function loadStripeDetails(c: CompanyCard) {
     if (!c.stripeCustomerId) return;
     setLoadingStripe(true);
     try {
-      // Your API route should support expands (see snippet below)
-      const res = await fetch(`/api/stripe/customers?id=${c.stripeCustomerId}&expand=tax_ids,invoice_settings.default_payment_method,discount,cash_balance,subscriptions`);
+      const res = await fetch(
+        `/api/stripe/customers?id=${c.stripeCustomerId}&expand=tax_ids,invoice_settings.default_payment_method,discount,cash_balance,subscriptions`
+      );
       const full = await res.json();
       setStripeDetails(full);
     } catch (e) {
@@ -202,17 +192,45 @@ export default function Companies() {
     }
   }
 
+  // fetch invoice numbers in parallel and attach to deals
+  async function attachInvoiceNumbers(deals: DealRow[]): Promise<DealRow[]> {
+    // Collect unique invoice_ids
+    const ids = Array.from(new Set(deals.map((d) => d.invoice_id).filter(Boolean))) as string[];
+    if (ids.length === 0) return deals;
+
+    // Fetch all numbers
+    const pairs = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const r = await fetch(`/api/stripe/invoice?id=${id}`);
+          if (!r.ok) throw new Error("bad response");
+          const inv = await r.json();
+          return [id, inv.number as string | null] as const;
+        } catch {
+          return [id, null] as const;
+        }
+      })
+    );
+
+    const map = new Map<string, string | null>(pairs);
+
+    // Attach invoice_number
+    return deals.map((d) => ({
+      ...d,
+      invoice_number: d.invoice_id ? map.get(d.invoice_id) ?? null : null,
+    }));
+  }
+
   async function loadCompanyDeals(c: CompanyCard) {
     setLoadingDeals(true);
     try {
-      // Prefer to join by stripe_customer_id when present, fallback to name
-      let query = supabase.from("deals").select("id, name, city, state, stage, account_rep, close_date, value, stripe_customer_id").order("close_date", { ascending: false });
+      let query = supabase
+        .from("deals")
+        .select("id, name, city, state, stage, account_rep, close_date, value, stripe_customer_id, invoice_id") // <-- include invoice_id
+        .order("close_date", { ascending: false });
 
-      if (c.stripeCustomerId) {
-        query = query.eq("stripe_customer_id", c.stripeCustomerId);
-      } else {
-        query = query.eq("name", c.name);
-      }
+      if (c.stripeCustomerId) query = query.eq("stripe_customer_id", c.stripeCustomerId);
+      else query = query.eq("name", c.name);
 
       const { data, error } = await query.returns<DealRow[]>();
       if (error) throw error;
@@ -221,7 +239,9 @@ export default function Companies() {
         ...d,
         stage: d.stage ? d.stage.toLowerCase() : null,
       }));
-      setCompanyDeals(normalized);
+
+      const withNumbers = await attachInvoiceNumbers(normalized);
+      setCompanyDeals(withNumbers);
     } catch (e) {
       console.error(e);
       setCompanyDeals([]);
@@ -234,7 +254,6 @@ export default function Companies() {
     setSelected(c);
     setStripeDetails(null);
     setCompanyDeals(null);
-    // kick off both loads in parallel
     loadCompanyDeals(c);
     if (c.stripeCustomerId) loadStripeDetails(c);
   }
@@ -244,26 +263,26 @@ export default function Companies() {
     let arr = companyDeals.slice();
 
     if (stageFilter !== "all") {
-      arr = arr.filter(d => (stageFilter === "paid" ? d.stage === "paid" : d.stage !== "paid"));
+      arr = arr.filter((d) => (stageFilter === "paid" ? d.stage === "paid" : d.stage !== "paid"));
     }
     if (repFilter !== "all") {
-      arr = arr.filter(d => (d.account_rep ?? "Unassigned") === repFilter);
+      arr = arr.filter((d) => (d.account_rep ?? "Unassigned") === repFilter);
     }
     if (minValue) {
       const mv = parseFloat(minValue);
-      if (!isNaN(mv)) arr = arr.filter(d => (d.value ?? 0) >= mv);
+      if (!isNaN(mv)) arr = arr.filter((d) => (d.value ?? 0) >= mv);
     }
     if (maxValue) {
       const xv = parseFloat(maxValue);
-      if (!isNaN(xv)) arr = arr.filter(d => (d.value ?? 0) <= xv);
+      if (!isNaN(xv)) arr = arr.filter((d) => (d.value ?? 0) <= xv);
     }
     if (startDate) {
       const s = new Date(startDate);
-      arr = arr.filter(d => !d.close_date || new Date(d.close_date) >= s);
+      arr = arr.filter((d) => !d.close_date || new Date(d.close_date) >= s);
     }
     if (endDate) {
       const e = new Date(endDate);
-      arr = arr.filter(d => !d.close_date || new Date(d.close_date) <= e);
+      arr = arr.filter((d) => !d.close_date || new Date(d.close_date) <= e);
     }
 
     return arr;
@@ -315,30 +334,6 @@ export default function Companies() {
                     {stripeDetails.invoice_settings.default_payment_method.card?.last4}
                   </div>
                 )}
-                {stripeDetails.tax_exempt && <div><strong>Tax Exempt:</strong> {stripeDetails.tax_exempt}</div>}
-                {stripeDetails.tax_ids?.data?.length ? (
-                  <div>
-                    <strong>Tax IDs:</strong>{" "}
-                    {stripeDetails.tax_ids.data.map(t => `${t.type.toUpperCase()}:${t.value}`).join(" · ")}
-                  </div>
-                ) : null}
-                {stripeDetails.discount?.coupon && (
-                  <div>
-                    <strong>Discount:</strong>{" "}
-                    {stripeDetails.discount.coupon.name || stripeDetails.discount.coupon.id}{" "}
-                    {stripeDetails.discount.coupon.percent_off != null
-                      ? `(${stripeDetails.discount.coupon.percent_off}% off)`
-                      : stripeDetails.discount.coupon.amount_off != null
-                      ? `(amount off)`
-                      : ""}
-                  </div>
-                )}
-                {stripeDetails.preferred_locales?.length ? (
-                  <div><strong>Locales:</strong> {stripeDetails.preferred_locales.join(", ")}</div>
-                ) : null}
-                {stripeDetails.metadata && Object.keys(stripeDetails.metadata).length > 0 && (
-                  <div><strong>Metadata keys:</strong> {Object.keys(stripeDetails.metadata).join(", ")}</div>
-                )}
               </div>
             ) : (
               <Button onClick={() => loadStripeDetails(selected!)}>Load Details</Button>
@@ -361,82 +356,43 @@ export default function Companies() {
         {/* Filters */}
         <Card className="p-4">
           <div className="grid md:grid-cols-5 gap-3 items-end">
-            {/* Stage */}
             <div className="flex flex-col">
               <label className="text-xs text-sc-delft/60 mb-1">Stage</label>
-              <select
-                className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm"
-                value={stageFilter}
-                onChange={(e) => setStageFilter(e.target.value as "all" | "open" | "paid")}
-              >
+              <select className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm" value={stageFilter} onChange={(e) => setStageFilter(e.target.value as "all" | "open" | "paid")}>
                 <option value="all">All</option>
                 <option value="open">Open</option>
                 <option value="paid">Paid</option>
               </select>
             </div>
 
-            {/* Rep */}
             <div className="flex flex-col">
               <label className="text-xs text-sc-delft/60 mb-1">Rep</label>
-              <select
-                className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm"
-                value={repFilter}
-                onChange={(e) => setRepFilter(e.target.value)}
-              >
-                {repOptions.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
+              <select className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm" value={repFilter} onChange={(e) => setRepFilter(e.target.value)}>
+                {repOptions.map((r) => (<option key={r} value={r}>{r}</option>))}
               </select>
             </div>
 
-            {/* Min / Max Value */}
             <div className="flex flex-col">
               <label className="text-xs text-sc-delft/60 mb-1">Min Value</label>
-              <input
-                inputMode="numeric"
-                className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm"
-                value={minValue}
-                onChange={(e) => setMinValue(e.target.value)}
-                placeholder="0"
-              />
+              <input inputMode="numeric" className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm" value={minValue} onChange={(e) => setMinValue(e.target.value)} placeholder="0" />
             </div>
             <div className="flex flex-col">
               <label className="text-xs text-sc-delft/60 mb-1">Max Value</label>
-              <input
-                inputMode="numeric"
-                className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm"
-                value={maxValue}
-                onChange={(e) => setMaxValue(e.target.value)}
-                placeholder="100000"
-              />
+              <input inputMode="numeric" className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm" value={maxValue} onChange={(e) => setMaxValue(e.target.value)} placeholder="100000" />
             </div>
 
-            {/* Dates */}
             <div className="grid grid-cols-2 gap-2">
               <div className="flex flex-col">
                 <label className="text-xs text-sc-delft/60 mb-1">Start</label>
-                <input
-                  type="date"
-                  className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                />
+                <input type="date" className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
               </div>
               <div className="flex flex-col">
                 <label className="text-xs text-sc-delft/60 mb-1">End</label>
-                <input
-                  type="date"
-                  className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                />
+                <input type="date" className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
               </div>
             </div>
           </div>
         </Card>
-
 
         {/* Deals table */}
         <Card className="p-0 overflow-hidden">
@@ -462,12 +418,14 @@ export default function Companies() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredDeals.map(d => (
+                  {filteredDeals.map((d) => (
                     <tr key={d.id} className="border-t border-sc-delft/10">
                       <td className="px-4 py-2 font-mono text-xs">{d.id}</td>
-                      <td className="px-4 py-2 font-mono text-xs">{d.invoice_number}</td>
+                      <td className="px-4 py-2 font-mono text-xs">{d.invoice_number ?? "—"}</td>
                       <td className="px-4 py-2">{d.stage ?? "—"}</td>
-                      <td className="px-4 py-2 text-right">${d.value != null ? d.value.toLocaleString() : "—"}</td>
+                      <td className="px-4 py-2 text-right">
+                        {d.value != null ? `$${d.value.toLocaleString()}` : "—"}
+                      </td>
                       <td className="px-4 py-2">{d.account_rep ?? "Unassigned"}</td>
                       <td className="px-4 py-2">{d.close_date ? new Date(d.close_date).toLocaleDateString() : "—"}</td>
                     </tr>
@@ -499,9 +457,7 @@ export default function Companies() {
           companies.map((c) => (
             <Card key={c.key} className="p-4">
               <div className="font-semibold text-sc-delft">{c.name}</div>
-              <div className="text-sm text-sc-delft/70">
-                {c.city}, {c.state}
-              </div>
+              <div className="text-sm text-sc-delft/70">{c.city}, {c.state}</div>
 
               {c.stripeCustomerId && (
                 <div className="text-xs text-sc-delft/60 mt-1">ID: {c.stripeCustomerId}</div>
@@ -528,14 +484,11 @@ export default function Companies() {
               </div>
 
               <div className="mt-1 text-xs text-sc-delft/60">
-                Last activity:{" "}
-                {c.lastActivity === "none" ? "None" : new Date(c.lastActivity).toLocaleDateString()}
+                Last activity: {c.lastActivity === "none" ? "None" : new Date(c.lastActivity).toLocaleDateString()}
               </div>
 
               <div className="mt-4">
-                <Button className="w-full" onClick={() => openDetails(c)}>
-                  View Details
-                </Button>
+                <Button className="w-full" onClick={() => openDetails(c)}>View Details</Button>
               </div>
             </Card>
           ))
