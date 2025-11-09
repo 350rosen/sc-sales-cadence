@@ -1,19 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { Card, Button } from "../components/ui";
+import Modal from "../components/forms/Modal";
+import CreateCustomerForm from "../components/forms/CreateCustomerForm";
 
 type DealRow = {
   id: string;
   name: string | null;
   city: string | null;
   state: string | null;
-  stage: string | null;         // 'paid' | 'open' | etc.
+  stage: string | null;
   account_rep: string | null;
   close_date: string | null;
   value?: number | null;
   stripe_customer_id?: string | null;
   invoice_id?: string | null;
-  invoice_number?: string | null; // from DB or Stripe fallback
+  invoice_number?: string | null;
 };
 
 type CompanyCard = {
@@ -28,6 +30,7 @@ type CompanyCard = {
   stripeCustomerId?: string | null;
 };
 
+type StripeCustomerLite = { id: string; name?: string; email?: string | null };
 type StripeCustomer = {
   id: string;
   name?: string | null;
@@ -62,17 +65,21 @@ type StripeCustomer = {
   metadata?: Record<string, string>;
 };
 
+const inputStyle =
+  "mt-1 w-full border border-sc-delft/25 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sc-green/40 focus:border-sc-green/60";
+const labelStyle = "text-sm font-medium text-sc-delft";
+
 export default function Companies() {
   const [rows, setRows] = useState<DealRow[]>([]);
   const [companies, setCompanies] = useState<CompanyCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [stripeErr, setStripeErr] = useState<string | null>(null);
 
   // selection + detail state
   const [selected, setSelected] = useState<CompanyCard | null>(null);
   const [stripeDetails, setStripeDetails] = useState<StripeCustomer | null>(null);
   const [loadingStripe, setLoadingStripe] = useState(false);
+  const [stripeErr, setStripeErr] = useState<string | null>(null);
 
   // deals under selected company
   const [companyDeals, setCompanyDeals] = useState<DealRow[] | null>(null);
@@ -90,6 +97,15 @@ export default function Companies() {
   const [companySearch, setCompanySearch] = useState("");
   const [repFilterList, setRepFilterList] = useState<string>("all");
   const [stateFilterList, setStateFilterList] = useState<string>("all");
+
+  // --- New: Stripe search + modal
+  const [openCreateCustomer, setOpenCreateCustomer] = useState(false);
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [customerBusy, setCustomerBusy] = useState(false);
+  const [customerErr, setCustomerErr] = useState<string | null>(null);
+  const [customerHits, setCustomerHits] = useState<StripeCustomerLite[]>([]);
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkErr, setLinkErr] = useState<string | null>(null);
 
   // -------- load base deals --------
   useEffect(() => {
@@ -210,8 +226,6 @@ export default function Companies() {
     if (companySearch.trim()) {
       const q = companySearch.trim().toLowerCase();
       arr = arr.filter((c) => c.name.toLowerCase().includes(q));
-      // Optionally also match city/state:
-      // || c.city.toLowerCase().includes(q) || c.state.toLowerCase().includes(q)
     }
     return arr;
   }, [companies, repFilterList, stateFilterList, companySearch]);
@@ -223,43 +237,39 @@ export default function Companies() {
   }
 
   // -------- helpers --------
-    async function loadStripeDetails(c: CompanyCard) {
-      if (!c.stripeCustomerId) return;
-      setStripeErr(null);
-      setLoadingStripe(true);
-      try {
-        const id = encodeURIComponent(c.stripeCustomerId);
-        // your API supports ?id= — extra expand is harmless if ignored
-        const res = await fetch(`/api/stripe/customers?id=${id}&expand=invoice_settings.default_payment_method,tax_ids,discount`);
-        const body = await res.json();
+  async function loadStripeDetails(c: CompanyCard) {
+    if (!c.stripeCustomerId) return;
+    setStripeErr(null);
+    setLoadingStripe(true);
+    try {
+      const id = encodeURIComponent(c.stripeCustomerId);
+      const res = await fetch(
+        `/api/stripe/customers?id=${id}&expand=invoice_settings.default_payment_method,tax_ids,discount`
+      );
+      const body = await res.json();
 
-        if (!res.ok) {
-          // body may be { error: '...' }
-          const msg = body?.error || `HTTP ${res.status}`;
-          setStripeErr(msg);
-          setStripeDetails(null);
-          return;
-        }
-
-        // basic sanity check so we don't render nulls silently
-        if (!body || !body.id) {
-          setStripeErr("No customer found for that ID.");
-          setStripeDetails(null);
-          return;
-        }
-
-        setStripeDetails(body);
-      } catch (e: any) {
-        setStripeErr(e?.message || "Failed to load Stripe details");
+      if (!res.ok) {
+        const msg = body?.error || `HTTP ${res.status}`;
+        setStripeErr(msg);
         setStripeDetails(null);
-      } finally {
-        setLoadingStripe(false);
+        return;
       }
+      if (!body || !body.id) {
+        setStripeErr("No customer found for that ID.");
+        setStripeDetails(null);
+        return;
+      }
+      setStripeDetails(body);
+    } catch (e: any) {
+      setStripeErr(e?.message || "Failed to load Stripe details");
+      setStripeDetails(null);
+    } finally {
+      setLoadingStripe(false);
     }
-
+  }
 
   async function attachInvoiceNumbers(deals: DealRow[]): Promise<DealRow[]> {
-    const needs = deals.filter((d) => !d.invoice_number && d.invoice_id).map((d) => d.invoice_id!) ;
+    const needs = deals.filter((d) => !d.invoice_number && d.invoice_id).map((d) => d.invoice_id!);
     const ids = Array.from(new Set(needs));
     if (!ids.length) return deals;
 
@@ -318,44 +328,54 @@ export default function Companies() {
     setCompanyDeals(null);
     loadCompanyDeals(c);
     if (c.stripeCustomerId) loadStripeDetails(c);
+    // prefill search box with current company name for convenience
+    setCustomerQuery(c.name);
+    void searchStripeCustomers(c.name);
   }
 
-  const filteredDeals = useMemo(() => {
-    if (!companyDeals) return [];
-    let arr = companyDeals.slice();
+  // --- New: search / link stripe customers
+  async function searchStripeCustomers(q: string) {
+    setCustomerBusy(true);
+    setCustomerErr(null);
+    try {
+      const url = q ? `/api/stripe/customers?q=${encodeURIComponent(q)}` : `/api/stripe/customers`;
+      const res = await fetch(url);
+      const data: StripeCustomerLite[] = await res.json();
+      if (!res.ok) throw new Error((data as any)?.error || "Search failed");
+      setCustomerHits(data || []);
+    } catch (e: any) {
+      setCustomerErr(e?.message || "Failed to search customers");
+      setCustomerHits([]);
+    } finally {
+      setCustomerBusy(false);
+    }
+  }
 
-    if (stageFilter !== "all") {
-      arr = arr.filter((d) => (stageFilter === "paid" ? d.stage === "paid" : d.stage !== "paid"));
-    }
-    if (repFilter !== "all") {
-      arr = arr.filter((d) => (d.account_rep ?? "Unassigned") === repFilter);
-    }
-    if (minValue) {
-      const mv = parseFloat(minValue);
-      if (!isNaN(mv)) arr = arr.filter((d) => (d.value ?? 0) >= mv);
-    }
-    if (maxValue) {
-      const xv = parseFloat(maxValue);
-      if (!isNaN(xv)) arr = arr.filter((d) => (d.value ?? 0) <= xv);
-    }
-    if (startDate) {
-      const s = new Date(startDate);
-      arr = arr.filter((d) => !d.close_date || new Date(d.close_date) >= s);
-    }
-    if (endDate) {
-      const e = new Date(endDate);
-      arr = arr.filter((d) => !d.close_date || new Date(d.close_date) <= e);
-    }
+  async function linkCompanyToStripe(stripeCustomerId: string) {
+    if (!selected) return;
+    setLinkBusy(true);
+    setLinkErr(null);
+    try {
+      // Update any deals for this company that lack a stripe_customer_id
+      const { error } = await supabase
+        .from("deals")
+        .update({ stripe_customer_id: stripeCustomerId })
+        .eq("name", selected.name)
+        .is("stripe_customer_id", null);
 
-    return arr;
-  }, [companyDeals, stageFilter, repFilter, minValue, maxValue, startDate, endDate]);
+      if (error) throw error;
 
-  const repOptions = useMemo(() => {
-    if (!companyDeals) return ["all"];
-    const set = new Set<string>();
-    for (const d of companyDeals) set.add(d.account_rep ?? "Unassigned");
-    return ["all", ...Array.from(set).sort()];
-  }, [companyDeals]);
+      // Update local selected, reload panels
+      const updated: CompanyCard = { ...selected, stripeCustomerId };
+      setSelected(updated);
+      await loadCompanyDeals(updated);
+      await loadStripeDetails(updated);
+    } catch (e: any) {
+      setLinkErr(e?.message || "Failed to link company");
+    } finally {
+      setLinkBusy(false);
+    }
+  }
 
   // ---------------------- DETAIL VIEW ----------------------
   if (selected) {
@@ -370,56 +390,107 @@ export default function Companies() {
         <div className="grid md:grid-cols-2 gap-4">
           {/* Left: Stripe panel */}
           <Card className="p-6 space-y-3">
-          <div className="text-base font-semibold">Customer Overview</div>
-          <div className="text-sm">Customer ID: {selected.stripeCustomerId ?? "N/A"}</div>
+            <div className="text-base font-semibold">Customer Overview</div>
+            <div className="text-sm">Customer ID: {selected.stripeCustomerId ?? "N/A"}</div>
 
-          {!selected.stripeCustomerId ? (
-            <div className="text-sm text-sc-delft/60">No customer linked.</div>
-          ) : loadingStripe ? (
-            <div className="text-sm text-sc-delft/60">Loading customer…</div>
-          ) : stripeErr ? (
-            <div className="text-sm text-red-600">
-              {stripeErr}
-              <div className="mt-2">
-                <Button onClick={() => loadStripeDetails(selected!)}>Retry</Button>
+            {!selected.stripeCustomerId ? (
+              <div className="text-sm text-sc-delft/60">No customer linked.</div>
+            ) : loadingStripe ? (
+              <div className="text-sm text-sc-delft/60">Loading customer…</div>
+            ) : stripeErr ? (
+              <div className="text-sm text-red-600">
+                {stripeErr}
+                <div className="mt-2">
+                  <Button onClick={() => loadStripeDetails(selected!)}>Retry</Button>
+                </div>
               </div>
-            </div>
-          ) : stripeDetails ? (
-            <div className="text-sm space-y-2">
-              <div><strong>Name:</strong> {stripeDetails.name || "—"}</div>
-              <div><strong>Email:</strong> {stripeDetails.email || "—"}</div>
-              <div><strong>Phone:</strong> {stripeDetails.phone || "—"}</div>
-              {stripeDetails.address && (
-                <div>
-                  <strong>Billing Address:</strong>{" "}
-                  {[stripeDetails.address.line1, stripeDetails.address.line2, stripeDetails.address.city, stripeDetails.address.state, stripeDetails.address.postal_code]
-                    .filter(Boolean).join(", ") || "—"}
-                </div>
-              )}
-              {stripeDetails.invoice_settings?.default_payment_method &&
-                typeof stripeDetails.invoice_settings.default_payment_method === "object" && (
-                <div>
-                  <strong>Default Payment Method:</strong>{" "}
-                  {stripeDetails.invoice_settings.default_payment_method.card?.brand?.toUpperCase()} ••••{" "}
-                  {stripeDetails.invoice_settings.default_payment_method.card?.last4}
-                </div>
-              )}
-            </div>
-          ) : (
-            <Button onClick={() => loadStripeDetails(selected!)}>Load Details</Button>
-          )}
-        </Card>
+            ) : stripeDetails ? (
+              <div className="text-sm space-y-2">
+                <div><strong>Name:</strong> {stripeDetails.name || "—"}</div>
+                <div><strong>Email:</strong> {stripeDetails.email || "—"}</div>
+                <div><strong>Phone:</strong> {stripeDetails.phone || "—"}</div>
+                {stripeDetails.address && (
+                  <div>
+                    <strong>Billing Address:</strong>{" "}
+                    {[
+                      stripeDetails.address.line1,
+                      stripeDetails.address.line2,
+                      stripeDetails.address.city,
+                      stripeDetails.address.state,
+                      stripeDetails.address.postal_code,
+                    ]
+                      .filter(Boolean)
+                      .join(", ") || "—"}
+                  </div>
+                )}
+                {stripeDetails.invoice_settings?.default_payment_method &&
+                  typeof stripeDetails.invoice_settings.default_payment_method === "object" && (
+                    <div>
+                      <strong>Default Payment Method:</strong>{" "}
+                      {stripeDetails.invoice_settings.default_payment_method.card?.brand?.toUpperCase()} ••••{" "}
+                      {stripeDetails.invoice_settings.default_payment_method.card?.last4}
+                    </div>
+                  )}
+              </div>
+            ) : (
+              <Button onClick={() => loadStripeDetails(selected!)}>Load Details</Button>
+            )}
+          </Card>
 
-          {/* Right: quick stats */}
-          <Card className="p-6 space-y-2">
-            <div className="text-base font-semibold">Deal Overview</div>
-            <div className="text-sm"><strong>Rep:</strong> {selected.rep}</div>
-            <div className="text-sm">
-              <strong>Last Activity:</strong>{" "}
-              {selected.lastActivity === "none" ? "None" : new Date(selected.lastActivity).toLocaleDateString()}
+          {/* Right: Link / Search Stripe customer */}
+          <Card className="p-6 space-y-4">
+            <div className="text-base font-semibold">Link to Stripe Customer</div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+              <label className={`${labelStyle} md:col-span-2`}>
+                Search Customers
+                <input
+                  className={inputStyle}
+                  value={customerQuery}
+                  onChange={(e) => {
+                    const q = e.target.value;
+                    setCustomerQuery(q);
+                    void searchStripeCustomers(q);
+                  }}
+                  placeholder="Type name or email…"
+                />
+              </label>
+
+              <Button
+                variant="secondary"
+                onClick={() => setOpenCreateCustomer(true)}
+              >
+                + New Customer
+              </Button>
             </div>
-            <div className="text-sm"><strong>Open Deals:</strong> {selected.openDeals}</div>
-            <div className="text-sm"><strong>Closed Deals:</strong> {selected.closedDeals}</div>
+
+            {customerErr && <div className="text-sm text-red-600">{customerErr}</div>}
+
+            <div className="border border-sc-delft/15 rounded-md">
+              <div className="px-3 py-2 border-b border-sc-delft/10 text-sm text-sc-delft/70">
+                Results {customerBusy ? "— searching…" : `(${customerHits.length})`}
+              </div>
+              <div className="max-h-64 overflow-auto divide-y divide-sc-delft/10">
+                {customerHits.map((c) => (
+                  <div key={c.id} className="px-3 py-2 flex items-center justify-between text-sm">
+                    <div>
+                      <div className="font-medium text-sc-delft">{c.name || "—"}</div>
+                      <div className="text-sc-delft/70">{c.email || "—"}</div>
+                    </div>
+                    <Button
+                      disabled={linkBusy}
+                      onClick={() => linkCompanyToStripe(c.id)}
+                    >
+                      {linkBusy ? "Linking…" : "Link"}
+                    </Button>
+                  </div>
+                ))}
+                {!customerBusy && customerHits.length === 0 && (
+                  <div className="px-3 py-4 text-sm text-sc-delft/60">No customers yet. Try another search or create a new one.</div>
+                )}
+              </div>
+              {linkErr && <div className="px-3 py-2 text-sm text-red-600">{linkErr}</div>}
+            </div>
           </Card>
         </div>
 
@@ -438,7 +509,7 @@ export default function Companies() {
             <div className="flex flex-col">
               <label className="text-xs text-sc-delft/60 mb-1">Rep</label>
               <select className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm" value={repFilter} onChange={(e) => setRepFilter(e.target.value)}>
-                {repOptions.map((r) => (<option key={r} value={r}>{r}</option>))}
+                {(["all", ...(companyDeals ? Array.from(new Set(companyDeals.map(d => d.account_rep ?? "Unassigned"))).sort() : [])] as string[]).map((r) => (<option key={r} value={r}>{r}</option>))}
               </select>
             </div>
 
@@ -488,33 +559,55 @@ export default function Companies() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredDeals.map((d) => (
-                    <tr key={d.id} className="border-t border-sc-delft/10">
-                      <td className="px-4 py-2 font-mono text-xs">{d.id}</td>
-                      <td className="px-4 py-2 font-mono text-xs">{d.invoice_number ?? "—"}</td>
-                      <td className="px-4 py-2 text-center">
-                        <span
-                          className={`inline-block rounded-full px-2 py-0.5 text-xs ${
-                            (d.stage ?? "").toLowerCase() === "paid"
-                              ? "bg-sc-lightgreen/20 text-sc-green"
-                              : "bg-sc-orange/20 text-sc-orange"
-                          }`}
-                        >
-                          {d.stage ?? "—"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        {d.value != null ? `$${d.value.toLocaleString()}` : "—"}
-                      </td>
-                      <td className="px-4 py-2">{d.account_rep ?? "Unassigned"}</td>
-                      <td className="px-4 py-2">{d.close_date ? new Date(d.close_date).toLocaleDateString() : "—"}</td>
-                    </tr>
-                  ))}
+                  {companyDeals
+                    .filter((d) => {
+                      let ok = true;
+                      if (stageFilter !== "all") ok = ok && (stageFilter === "paid" ? d.stage === "paid" : d.stage !== "paid");
+                      if (repFilter !== "all") ok = ok && ((d.account_rep ?? "Unassigned") === repFilter);
+                      if (minValue) ok = ok && ((d.value ?? 0) >= (parseFloat(minValue) || 0));
+                      if (maxValue) ok = ok && ((d.value ?? 0) <= (parseFloat(maxValue) || Infinity));
+                      if (startDate) ok = ok && (!d.close_date || new Date(d.close_date) >= new Date(startDate));
+                      if (endDate) ok = ok && (!d.close_date || new Date(d.close_date) <= new Date(endDate));
+                      return ok;
+                    })
+                    .map((d) => (
+                      <tr key={d.id} className="border-t border-sc-delft/10">
+                        <td className="px-4 py-2 font-mono text-xs">{d.id}</td>
+                        <td className="px-4 py-2 font-mono text-xs">{d.invoice_number ?? "—"}</td>
+                        <td className="px-4 py-2 text-center">
+                          <span
+                            className={`inline-block rounded-full px-2 py-0.5 text-xs ${
+                              (d.stage ?? "").toLowerCase() === "paid"
+                                ? "bg-sc-lightgreen/20 text-sc-green"
+                                : "bg-sc-orange/20 text-sc-orange"
+                            }`}
+                          >
+                            {d.stage ?? "—"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {d.value != null ? `$${d.value.toLocaleString()}` : "—"}
+                        </td>
+                        <td className="px-4 py-2">{d.account_rep ?? "Unassigned"}</td>
+                        <td className="px-4 py-2">{d.close_date ? new Date(d.close_date).toLocaleDateString() : "—"}</td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>
           )}
         </Card>
+
+        {/* Create Customer Modal */}
+        <Modal open={openCreateCustomer} title="Create Customer" onClose={() => setOpenCreateCustomer(false)}>
+          <CreateCustomerForm
+            onDone={async () => {
+              setOpenCreateCustomer(false);
+              // Refresh search list with current query so the new customer appears
+              await searchStripeCustomers(customerQuery || selected.name);
+            }}
+          />
+        </Modal>
       </section>
     );
   }

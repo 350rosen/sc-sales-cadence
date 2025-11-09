@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
-import { PageHeader, Card, Button, Select, Input } from "../components/ui";
+import { PageHeader, Card, Button } from "../components/ui";
 import Modal from "../components/forms/Modal";
 import CreateCustomerForm from "../components/forms/CreateCustomerForm";
 import { useRole } from "../services/useRole";
-
 
 /* ---------------- Types ---------------- */
 type CustomerLite = { id: string; name: string; email?: string | null };
@@ -13,11 +12,11 @@ type Contact = {
   name: string;
   email: string;
   phone?: string | null;
-  customer_id?: string | null;
+  customer_id?: string | null;   // Stripe customer id
   customer_name?: string | null;
 };
 
-/* ---------------- Email choices ---------------- */
+/* ---------------- Constants ---------------- */
 const EMAIL_TEMPLATES = [
   { key: "intro_onepager", label: "Intro + One-Pager" },
   { key: "intro_pricing", label: "Intro + Pricing Overview" },
@@ -29,32 +28,31 @@ const ATTACHMENTS = [
   { key: "sell-sheet", label: "Sell Sheet (PDF)", file: "/attachments/sell-sheet.pdf" },
 ];
 
+/* ---------------- Styling helpers ---------------- */
+const inputStyle =
+  "mt-1 w-full border border-sc-delft/25 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sc-green/40 focus:border-sc-green/60";
+const labelStyle = "text-sm font-medium text-sc-delft";
+
 /* ---------------- Component ---------------- */
 export default function Communications() {
   const { profile, loading: roleLoading } = useRole();
   const repName = (profile?.full_name || "").trim();
 
-  // data
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
-
-  // selections
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
   const [selectedContactId, setSelectedContactId] = useState<number | "new" | "">("");
   const [newContact, setNewContact] = useState<Partial<Contact>>({ name: "", email: "", phone: "" });
 
-  // email content
-  const [templateKey, setTemplateKey] = useState<string>(EMAIL_TEMPLATES[0].key);
-  const [attachmentKey, setAttachmentKey] = useState<string>(ATTACHMENTS[0].key);
-  const [subject, setSubject] = useState<string>("Quick intro from Sun Caddy");
-  const [intro, setIntro] = useState<string>(
-    "Hi there — wanted to share a quick intro and one-pager. Happy to connect!"
-  );
+  const [templateKey, setTemplateKey] = useState(EMAIL_TEMPLATES[0].key);
+  const [attachmentKey, setAttachmentKey] = useState(ATTACHMENTS[0].key);
+  const [subject, setSubject] = useState("Quick intro from Sun Caddy");
+  const [intro, setIntro] = useState("Hi there — wanted to share a quick intro and one-pager. Happy to connect!");
 
-  // ui state
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [sentOk, setSentOk] = useState(false);
+
   const [openCreateCustomer, setOpenCreateCustomer] = useState(false);
 
   const selectedCustomer = useMemo(
@@ -66,14 +64,17 @@ export default function Communications() {
     [contacts, selectedContactId]
   );
 
-  const canSend = useMemo(() => {
-    if (!repName) return false;
-    const email = selectedContact?.email || newContact.email;
-    const name = selectedContact?.name || newContact.name;
-    return !!selectedCustomerId && !!email && !!name && !!subject && !!templateKey && !!attachmentKey && !sending;
-  }, [repName, selectedCustomerId, selectedContact, newContact, subject, templateKey, attachmentKey, sending]);
+  const canSend =
+    !!repName &&
+    !!selectedCustomerId &&
+    !!(selectedContact?.email || newContact.email) &&
+    !!(selectedContact?.name || newContact.name) &&
+    !!subject &&
+    !!templateKey &&
+    !!attachmentKey &&
+    !sending;
 
-  /* -------- Load Stripe customers (top 10; simple) -------- */
+  /* -------- Load Stripe customers -------- */
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -81,26 +82,34 @@ export default function Communications() {
         const res = await fetch("/api/stripe/customers");
         const data: CustomerLite[] = await res.json();
         if (!cancel) setCustomers(data || []);
-      } catch (e) {
+      } catch {
         if (!cancel) setErr("Failed to load Stripe customers.");
       }
     })();
     return () => { cancel = true; };
   }, []);
 
-  /* -------- Load/Filter contacts by selected customer (Stripe customer_id) -------- */
+  /* -------- Load contacts (from communication_contacts) -------- */
   useEffect(() => {
     let cancel = false;
     (async () => {
       try {
         const { data, error } = await supabase
-          .from("contacts")
+          .from("communication_contacts")
           .select("id,name,email,phone,customer_id,customer_name")
           .order("name", { ascending: true });
 
-        if (error) throw new Error(error.message);
-        if (cancel) return;
+        if (error) {
+          if (error.code === "PGRST205") {
+            setErr("Table communication_contacts not found — create it in Supabase.");
+            setContacts([]);
+          } else {
+            throw error;
+          }
+          return;
+        }
 
+        if (cancel) return;
         const all = (data ?? []) as Contact[];
         const filtered = selectedCustomerId
           ? all.filter(c => String(c.customer_id) === String(selectedCustomerId))
@@ -108,7 +117,7 @@ export default function Communications() {
 
         setContacts(filtered);
       } catch (e: any) {
-        if (!cancel) setErr(e?.message || "Failed to load contacts");
+        if (!cancel) setErr(e.message || "Failed to load contacts");
       }
     })();
     return () => { cancel = true; };
@@ -119,27 +128,24 @@ export default function Communications() {
     setErr(null);
     setSentOk(false);
     setSending(true);
-
     try {
-      // ensure contact exists if "new"
       let contactId = typeof selectedContactId === "number" ? selectedContactId : null;
-      let contactName = selectedContact?.name || newContact.name || "";
-      let contactEmail = selectedContact?.email || newContact.email || "";
-      let contactPhone = selectedContact?.phone || newContact.phone || null;
+      const contactName = selectedContact?.name || newContact.name || "";
+      const contactEmail = selectedContact?.email || newContact.email || "";
+      const contactPhone = selectedContact?.phone || newContact.phone || null;
 
       if (selectedContactId === "new") {
         const { data, error } = await supabase
-          .from("contacts")
+          .from("communication_contacts")
           .insert({
             name: contactName,
             email: contactEmail,
             phone: contactPhone,
-            customer_id: selectedCustomerId,               // Stripe id
+            customer_id: selectedCustomerId,
             customer_name: selectedCustomer?.name ?? null,
           })
           .select("id")
           .single();
-
         if (error) throw new Error(error.message);
         contactId = data?.id ?? null;
       }
@@ -154,11 +160,7 @@ export default function Communications() {
         intro,
         attachmentKey,
         attachmentPath,
-        context: {
-          contactName,
-          customerName: selectedCustomer?.name ?? "",
-          repName,
-        },
+        context: { contactName, customerName: selectedCustomer?.name ?? "", repName },
       };
 
       const res = await fetch("/api/email/send", {
@@ -166,7 +168,6 @@ export default function Communications() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-
       const json = await res.json();
       const ok = res.ok;
 
@@ -186,7 +187,6 @@ export default function Communications() {
       });
 
       if (!ok) throw new Error(json?.error || "Failed to send");
-
       setSentOk(true);
     } catch (e: any) {
       setErr(e?.message || "Send failed");
@@ -198,50 +198,53 @@ export default function Communications() {
   /* -------- View -------- */
   return (
     <section className="space-y-4">
-    <PageHeader
-      title="Communications"
-      cta={
-        <div className="flex gap-2">
-          <Button onClick={() => setOpenCreateCustomer(true)}>Create Customer</Button>
-        </div>
-      }
-    />
+      <PageHeader
+        title="Communications"
+        cta={
+          <div className="flex gap-2">
+            <Button onClick={() => setOpenCreateCustomer(true)}>
+              Create Customer
+            </Button>
+          </div>
+        }
+      />
+
       <Card className="p-3 text-sm text-sc-delft/70">
-        {roleLoading ? "Loading role…" : <>Signed in as <b>{repName || "—"}</b>. Send intros and track outbound emails (pre-deal).</>}
+        {roleLoading
+          ? "Loading profile…"
+          : <>Signed in as <b>{repName || "—"}</b>. Send intros and track outbound emails.</>}
       </Card>
 
       {err && <div className="text-sm text-red-600">Error: {err}</div>}
       {sentOk && <div className="text-sm text-green-700">Email sent and logged.</div>}
 
-      {/* ---- Section: Recipient ---- */}
+      {/* Recipient */}
       <Card className="border border-sc-delft/20 rounded-md">
-        <div className="px-4 py-3 border-b border-sc-delft/10 font-semibold text-sc-delft">Recipient</div>
+        <div className="px-4 py-3 border-b border-sc-delft/10 font-semibold text-sc-delft">
+          Recipient
+        </div>
         <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Customer */}
-          <label className="text-sm block">
+          <label className={labelStyle}>
             Customer
-            <Select
-              className="mt-1 w-full"
+            <select
+              className={inputStyle}
               value={selectedCustomerId}
-              onChange={(e: any) => {
+              onChange={(e) => {
                 setSelectedCustomerId(e.target.value);
                 setSelectedContactId("");
               }}
             >
               <option value="">Select customer…</option>
-              {customers.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </Select>
+              {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
           </label>
 
-          {/* Contact */}
-          <label className="text-sm block">
+          <label className={labelStyle}>
             Contact
-            <Select
-              className="mt-1 w-full"
+            <select
+              className={inputStyle}
               value={String(selectedContactId)}
-              onChange={(e: any) => {
+              onChange={(e) => {
                 const v = e.target.value;
                 setSelectedContactId(v === "new" ? "new" : v ? Number(v) : "");
               }}
@@ -252,59 +255,58 @@ export default function Communications() {
                 <option key={c.id} value={c.id}>{c.name} — {c.email}</option>
               ))}
               <option value="new">+ Add new contact</option>
-            </Select>
+            </select>
           </label>
         </div>
 
         {selectedContactId === "new" && (
           <div className="px-4 pb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <label className="text-sm">
-              Contact Name
-              <Input className="mt-1 w-full" value={newContact.name || ""} onChange={(e:any)=>setNewContact(s=>({...s, name: e.target.value}))}/>
+            <label className={labelStyle}>
+              Name
+              <input className={inputStyle} value={newContact.name || ""} onChange={(e) => setNewContact(s => ({ ...s, name: e.target.value }))}/>
             </label>
-            <label className="text-sm">
+            <label className={labelStyle}>
               Email
-              <Input className="mt-1 w-full" type="email" value={newContact.email || ""} onChange={(e:any)=>setNewContact(s=>({...s, email: e.target.value}))}/>
+              <input className={inputStyle} type="email" value={newContact.email || ""} onChange={(e) => setNewContact(s => ({ ...s, email: e.target.value }))}/>
             </label>
-            <label className="text-sm">
+            <label className={labelStyle}>
               Phone
-              <Input className="mt-1 w-full" value={newContact.phone || ""} onChange={(e:any)=>setNewContact(s=>({...s, phone: e.target.value}))}/>
+              <input className={inputStyle} value={newContact.phone || ""} onChange={(e) => setNewContact(s => ({ ...s, phone: e.target.value }))}/>
             </label>
           </div>
         )}
       </Card>
 
-      {/* ---- Section: Email Details ---- */}
+      {/* Email section */}
       <Card className="border border-sc-delft/20 rounded-md">
-        <div className="px-4 py-3 border-b border-sc-delft/10 font-semibold text-sc-delft">Email</div>
+        <div className="px-4 py-3 border-b border-sc-delft/10 font-semibold text-sc-delft">
+          Email
+        </div>
         <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <label className="text-sm">
+          <label className={labelStyle}>
             Template
-            <Select className="mt-1 w-full" value={templateKey} onChange={(e:any)=>setTemplateKey(e.target.value)}>
+            <select className={inputStyle} value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>
               {EMAIL_TEMPLATES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-            </Select>
+            </select>
           </label>
-          <label className="text-sm">
+
+          <label className={labelStyle}>
             Attachment
-            <Select className="mt-1 w-full" value={attachmentKey} onChange={(e:any)=>setAttachmentKey(e.target.value)}>
+            <select className={inputStyle} value={attachmentKey} onChange={(e) => setAttachmentKey(e.target.value)}>
               {ATTACHMENTS.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}
-            </Select>
+            </select>
           </label>
-          <label className="text-sm">
+
+          <label className={labelStyle}>
             Subject
-            <Input className="mt-1 w-full" value={subject} onChange={(e:any)=>setSubject(e.target.value)} />
+            <input className={inputStyle} value={subject} onChange={(e) => setSubject(e.target.value)} />
           </label>
         </div>
 
         <div className="px-4 pb-4">
-          <label className="text-sm block">
+          <label className={labelStyle}>
             Intro Message
-            <textarea
-              className="mt-1 w-full border rounded px-2 py-2 text-sm"
-              rows={6}
-              value={intro}
-              onChange={(e:any)=>setIntro(e.target.value)}
-            />
+            <textarea className={`${inputStyle} resize-y`} rows={6} value={intro} onChange={(e) => setIntro(e.target.value)} />
           </label>
         </div>
 
@@ -315,12 +317,11 @@ export default function Communications() {
         </div>
       </Card>
 
-      {/* ---- Modal: Create Customer ---- */}
+      {/* Modals */}
       <Modal open={openCreateCustomer} title="Create Customer" onClose={() => setOpenCreateCustomer(false)}>
         <CreateCustomerForm
           onDone={async () => {
             setOpenCreateCustomer(false);
-            // refresh Stripe list after creation
             const res = await fetch("/api/stripe/customers");
             const data: CustomerLite[] = await res.json();
             setCustomers(data || []);
