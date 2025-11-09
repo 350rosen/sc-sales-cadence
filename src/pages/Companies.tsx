@@ -12,7 +12,7 @@ type DealRow = {
   close_date: string | null;
   value?: number | null;        // add if present in your schema
   stripe_customer_id?: string | null;
-  invoice_id?: string | null;
+  invoice_number?: string | null;
 };
 
 type CompanyCard = {
@@ -465,7 +465,7 @@ export default function Companies() {
                   {filteredDeals.map(d => (
                     <tr key={d.id} className="border-t border-sc-delft/10">
                       <td className="px-4 py-2 font-mono text-xs">{d.id}</td>
-                      <td className="px-4 py-2 font-mono text-xs">{d.invoice_id}</td>
+                      <td className="px-4 py-2 font-mono text-xs">{d.invoice_number}</td>
                       <td className="px-4 py-2">{d.stage ?? "—"}</td>
                       <td className="px-4 py-2 text-right">${d.value != null ? d.value.toLocaleString() : "—"}</td>
                       <td className="px-4 py-2">{d.account_rep ?? "Unassigned"}</td>
