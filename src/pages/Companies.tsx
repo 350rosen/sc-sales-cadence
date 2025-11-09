@@ -12,8 +12,8 @@ type DealRow = {
   close_date: string | null;
   value?: number | null;
   stripe_customer_id?: string | null;
-  invoice_id?: string | null;        // <-- added
-  invoice_number?: string | null;    // <-- filled client-side
+  invoice_id?: string | null;
+  invoice_number?: string | null; // from DB or Stripe fallback
 };
 
 type CompanyCard = {
@@ -67,6 +67,7 @@ export default function Companies() {
   const [companies, setCompanies] = useState<CompanyCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [stripeErr, setStripeErr] = useState<string | null>(null);
 
   // selection + detail state
   const [selected, setSelected] = useState<CompanyCard | null>(null);
@@ -77,7 +78,7 @@ export default function Companies() {
   const [companyDeals, setCompanyDeals] = useState<DealRow[] | null>(null);
   const [loadingDeals, setLoadingDeals] = useState(false);
 
-  // filters
+  // detail view filters (deals)
   const [stageFilter, setStageFilter] = useState<"all" | "open" | "paid">("all");
   const [repFilter, setRepFilter] = useState<string>("all");
   const [minValue, setMinValue] = useState<string>("");
@@ -85,12 +86,19 @@ export default function Companies() {
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
 
+  // list view filters (companies)
+  const [companySearch, setCompanySearch] = useState("");
+  const [repFilterList, setRepFilterList] = useState<string>("all");
+  const [stateFilterList, setStateFilterList] = useState<string>("all");
+
   // -------- load base deals --------
   useEffect(() => {
     (async () => {
       const { data, error } = await supabase
         .from("deals")
-        .select("id, name, city, state, stage, account_rep, close_date, value, stripe_customer_id, invoice_id") // <-- include invoice_id
+        .select(
+          "id, name, city, state, stage, account_rep, close_date, value, stripe_customer_id, invoice_id, invoice_number"
+        )
         .returns<DealRow[]>();
 
       if (error) {
@@ -175,53 +183,112 @@ export default function Companies() {
     setCompanies(out);
   }, [rows]);
 
-  // -------- helpers --------
-  async function loadStripeDetails(c: CompanyCard) {
-    if (!c.stripeCustomerId) return;
-    setLoadingStripe(true);
-    try {
-      const res = await fetch(
-        `/api/stripe/customers?id=${c.stripeCustomerId}&expand=tax_ids,invoice_settings.default_payment_method,discount,cash_balance,subscriptions`
-      );
-      const full = await res.json();
-      setStripeDetails(full);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoadingStripe(false);
+  // -------- list view filter options & filtering --------
+  const repOptionsList = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of companies) s.add(c.rep || "Unassigned");
+    return ["all", ...Array.from(s).sort()];
+  }, [companies]);
+
+  const stateOptionsList = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of companies) s.add(c.state || "—");
+    const items = Array.from(s).filter((v) => v !== "—").sort();
+    if (s.has("—")) items.push("—");
+    return ["all", ...items];
+  }, [companies]);
+
+  const visibleCompanies = useMemo(() => {
+    let arr = companies.slice();
+
+    if (repFilterList !== "all") {
+      arr = arr.filter((c) => (c.rep || "Unassigned") === repFilterList);
     }
+    if (stateFilterList !== "all") {
+      arr = arr.filter((c) => (c.state || "—") === stateFilterList);
+    }
+    if (companySearch.trim()) {
+      const q = companySearch.trim().toLowerCase();
+      arr = arr.filter((c) => c.name.toLowerCase().includes(q));
+      // Optionally also match city/state:
+      // || c.city.toLowerCase().includes(q) || c.state.toLowerCase().includes(q)
+    }
+    return arr;
+  }, [companies, repFilterList, stateFilterList, companySearch]);
+
+  function resetCompanyFilters() {
+    setCompanySearch("");
+    setRepFilterList("all");
+    setStateFilterList("all");
   }
 
-  // fetch invoice numbers in parallel and attach to deals
-  async function attachInvoiceNumbers(deals: DealRow[]): Promise<DealRow[]> {
-  const needs = deals.filter(d => !d.invoice_number && d.invoice_id).map(d => d.invoice_id!) ;
-  const ids = Array.from(new Set(needs));
-  if (!ids.length) return deals;
+  // -------- helpers --------
+    async function loadStripeDetails(c: CompanyCard) {
+      if (!c.stripeCustomerId) return;
+      setStripeErr(null);
+      setLoadingStripe(true);
+      try {
+        const id = encodeURIComponent(c.stripeCustomerId);
+        // your API supports ?id= — extra expand is harmless if ignored
+        const res = await fetch(`/api/stripe/customers?id=${id}&expand=invoice_settings.default_payment_method,tax_ids,discount`);
+        const body = await res.json();
 
-  const pairs = await Promise.all(ids.map(async (id) => {
-    try {
-      const r = await fetch(`/api/stripe/invoice?id=${id}`);
-      const inv = await r.json();
-      return [id, inv?.number ?? null] as const;
-    } catch {
-      return [id, null] as const;
+        if (!res.ok) {
+          // body may be { error: '...' }
+          const msg = body?.error || `HTTP ${res.status}`;
+          setStripeErr(msg);
+          setStripeDetails(null);
+          return;
+        }
+
+        // basic sanity check so we don't render nulls silently
+        if (!body || !body.id) {
+          setStripeErr("No customer found for that ID.");
+          setStripeDetails(null);
+          return;
+        }
+
+        setStripeDetails(body);
+      } catch (e: any) {
+        setStripeErr(e?.message || "Failed to load Stripe details");
+        setStripeDetails(null);
+      } finally {
+        setLoadingStripe(false);
+      }
     }
-  }));
 
-  const map = new Map<string, string | null>(pairs);
-  return deals.map(d => d.invoice_number
-    ? d
-    : ({ ...d, invoice_number: d.invoice_id ? map.get(d.invoice_id) ?? null : null })
-  );
-}
 
+  async function attachInvoiceNumbers(deals: DealRow[]): Promise<DealRow[]> {
+    const needs = deals.filter((d) => !d.invoice_number && d.invoice_id).map((d) => d.invoice_id!) ;
+    const ids = Array.from(new Set(needs));
+    if (!ids.length) return deals;
+
+    const pairs = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const r = await fetch(`/api/stripe/invoice?id=${id}`);
+          const inv = await r.json();
+          return [id, inv?.number ?? null] as const;
+        } catch {
+          return [id, null] as const;
+        }
+      })
+    );
+
+    const map = new Map<string, string | null>(pairs);
+    return deals.map((d) =>
+      d.invoice_number ? d : { ...d, invoice_number: d.invoice_id ? map.get(d.invoice_id) ?? null : null }
+    );
+  }
 
   async function loadCompanyDeals(c: CompanyCard) {
     setLoadingDeals(true);
     try {
       let query = supabase
         .from("deals")
-        .select("id, name, city, state, stage, account_rep, close_date, value, stripe_customer_id, invoice_id") // <-- include invoice_id
+        .select(
+          "id, name, city, state, stage, account_rep, close_date, value, stripe_customer_id, invoice_id, invoice_number"
+        )
         .order("close_date", { ascending: false });
 
       if (c.stripeCustomerId) query = query.eq("stripe_customer_id", c.stripeCustomerId);
@@ -303,37 +370,45 @@ export default function Companies() {
         <div className="grid md:grid-cols-2 gap-4">
           {/* Left: Stripe panel */}
           <Card className="p-6 space-y-3">
-            <div className="text-base font-semibold">Customer Overview</div>
-            <div className="text-sm">Customer ID: {selected.stripeCustomerId ?? "N/A"}</div>
+          <div className="text-base font-semibold">Customer Overview</div>
+          <div className="text-sm">Customer ID: {selected.stripeCustomerId ?? "N/A"}</div>
 
-            {!selected.stripeCustomerId ? (
-              <div className="text-sm text-sc-delft/60">No customer linked.</div>
-            ) : loadingStripe ? (
-              <div className="text-sm text-sc-delft/60">Loading customer…</div>
-            ) : stripeDetails ? (
-              <div className="text-sm space-y-2">
-                <div><strong>Name:</strong> {stripeDetails.name || "—"}</div>
-                <div><strong>Email:</strong> {stripeDetails.email || "—"}</div>
-                <div><strong>Phone:</strong> {stripeDetails.phone || "—"}</div>
-                {stripeDetails.address && (
-                  <div>
-                    <strong>Billing Address:</strong>{" "}
-                    {[stripeDetails.address.line1, stripeDetails.address.line2, stripeDetails.address.city, stripeDetails.address.state, stripeDetails.address.postal_code]
-                      .filter(Boolean).join(", ") || "—"}
-                  </div>
-                )}
-                {stripeDetails.invoice_settings?.default_payment_method && typeof stripeDetails.invoice_settings.default_payment_method === "object" && (
-                  <div>
-                    <strong>Default Payment Method:</strong>{" "}
-                    {stripeDetails.invoice_settings.default_payment_method.card?.brand?.toUpperCase()} ••••{" "}
-                    {stripeDetails.invoice_settings.default_payment_method.card?.last4}
-                  </div>
-                )}
+          {!selected.stripeCustomerId ? (
+            <div className="text-sm text-sc-delft/60">No customer linked.</div>
+          ) : loadingStripe ? (
+            <div className="text-sm text-sc-delft/60">Loading customer…</div>
+          ) : stripeErr ? (
+            <div className="text-sm text-red-600">
+              {stripeErr}
+              <div className="mt-2">
+                <Button onClick={() => loadStripeDetails(selected!)}>Retry</Button>
               </div>
-            ) : (
-              <Button onClick={() => loadStripeDetails(selected!)}>Load Details</Button>
-            )}
-          </Card>
+            </div>
+          ) : stripeDetails ? (
+            <div className="text-sm space-y-2">
+              <div><strong>Name:</strong> {stripeDetails.name || "—"}</div>
+              <div><strong>Email:</strong> {stripeDetails.email || "—"}</div>
+              <div><strong>Phone:</strong> {stripeDetails.phone || "—"}</div>
+              {stripeDetails.address && (
+                <div>
+                  <strong>Billing Address:</strong>{" "}
+                  {[stripeDetails.address.line1, stripeDetails.address.line2, stripeDetails.address.city, stripeDetails.address.state, stripeDetails.address.postal_code]
+                    .filter(Boolean).join(", ") || "—"}
+                </div>
+              )}
+              {stripeDetails.invoice_settings?.default_payment_method &&
+                typeof stripeDetails.invoice_settings.default_payment_method === "object" && (
+                <div>
+                  <strong>Default Payment Method:</strong>{" "}
+                  {stripeDetails.invoice_settings.default_payment_method.card?.brand?.toUpperCase()} ••••{" "}
+                  {stripeDetails.invoice_settings.default_payment_method.card?.last4}
+                </div>
+              )}
+            </div>
+          ) : (
+            <Button onClick={() => loadStripeDetails(selected!)}>Load Details</Button>
+          )}
+        </Card>
 
           {/* Right: quick stats */}
           <Card className="p-6 space-y-2">
@@ -417,8 +492,8 @@ export default function Companies() {
                     <tr key={d.id} className="border-t border-sc-delft/10">
                       <td className="px-4 py-2 font-mono text-xs">{d.id}</td>
                       <td className="px-4 py-2 font-mono text-xs">{d.invoice_number ?? "—"}</td>
-                      <td className="px-4 py-2">
-                           <span
+                      <td className="px-4 py-2 text-center">
+                        <span
                           className={`inline-block rounded-full px-2 py-0.5 text-xs ${
                             (d.stage ?? "").toLowerCase() === "paid"
                               ? "bg-sc-lightgreen/20 text-sc-green"
@@ -449,20 +524,70 @@ export default function Companies() {
     <section className="space-y-4">
       {!loading && (
         <div className="text-xs text-sc-delft/60">
-          {err ? `Error: ${err}` : `companies: ${companies.length}`}
+          {err ? `Error: ${err}` : `companies: ${visibleCompanies.length} / ${companies.length}`}
         </div>
       )}
+
+      {/* Toolbar: Rep + State + Search + Reset */}
+      <Card className="p-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Rep */}
+          <div className="text-sm text-sc-delft/70">Rep</div>
+          <select
+            className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm"
+            value={repFilterList}
+            onChange={(e) => setRepFilterList(e.target.value)}
+          >
+            {repOptionsList.map((r) => (
+              <option key={r} value={r}>
+                {r === "all" ? "All" : r}
+              </option>
+            ))}
+          </select>
+
+          {/* State */}
+          <div className="text-sm text-sc-delft/70">State</div>
+          <select
+            className="border border-sc-delft/15 rounded-md px-2 py-1 text-sm"
+            value={stateFilterList}
+            onChange={(e) => setStateFilterList(e.target.value)}
+          >
+            {stateOptionsList.map((st) => (
+              <option key={st} value={st}>
+                {st === "all" ? "All" : st}
+              </option>
+            ))}
+          </select>
+
+          {/* Search */}
+          <input
+            id="companies-search"
+            className="border border-sc-delft/15 rounded-md px-3 py-1 text-sm min-w-[260px] flex-1"
+            placeholder="Search company name…"
+            value={companySearch}
+            onChange={(e) => setCompanySearch(e.target.value)}
+          />
+
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="secondary" onClick={resetCompanyFilters}>
+              Reset
+            </Button>
+          </div>
+        </div>
+      </Card>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {loading ? (
           <Card className="p-4 text-sc-delft/60">Loading…</Card>
-        ) : companies.length === 0 ? (
+        ) : visibleCompanies.length === 0 ? (
           <Card className="p-4 text-sc-delft/60">No companies yet</Card>
         ) : (
-          companies.map((c) => (
+          visibleCompanies.map((c) => (
             <Card key={c.key} className="p-4">
               <div className="font-semibold text-sc-delft">{c.name}</div>
-              <div className="text-sm text-sc-delft/70">{c.city}, {c.state}</div>
+              <div className="text-sm text-sc-delft/70">
+                {c.city}, {c.state}
+              </div>
 
               {c.stripeCustomerId && (
                 <div className="text-xs text-sc-delft/60 mt-1">ID: {c.stripeCustomerId}</div>
@@ -493,7 +618,9 @@ export default function Companies() {
               </div>
 
               <div className="mt-4">
-                <Button className="w-full" onClick={() => openDetails(c)}>View Details</Button>
+                <Button className="w-full" onClick={() => openDetails(c)}>
+                  View Details
+                </Button>
               </div>
             </Card>
           ))
