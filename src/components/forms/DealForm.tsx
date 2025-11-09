@@ -121,7 +121,8 @@ function deriveFromStripe(c: StripeCustomerFull) {
 /* ---------------- Component ---------------- */
 
 export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Props) {
-  const [mode, setMode] = useState<"manual" | "csv">("manual");
+  const [mode] = useState<"manual">("manual"); // always manual for now
+//   const [mode, setMode] = useState<"manual" | "csv">("manual");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -494,11 +495,20 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
 
   return (
     <div className="space-y-4">
-      {/* Mode toggle */}
-      <div className="flex gap-2">
-        <Button variant={mode === "manual" ? "primary" : "secondary"} onClick={() => setMode("manual")}>Manual</Button>
-        <Button variant={mode === "csv" ? "primary" : "secondary"} onClick={() => setMode("csv")}>CSV Upload</Button>
-      </div>
+    {/* Mode toggle (CSV temporarily disabled) */}
+    <div className="flex gap-2">
+      <Button variant="primary" disabled>
+        Manual
+      </Button>
+      <Button
+        variant="secondary"
+        disabled
+        title="CSV import temporarily disabled"
+        className="opacity-50 cursor-not-allowed"
+      >
+        CSV Upload
+      </Button>
+    </div>
 
       {mode === "manual" ? (
         <>
