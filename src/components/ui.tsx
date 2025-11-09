@@ -58,3 +58,13 @@ export const Select = (props: React.SelectHTMLAttributes<HTMLSelectElement>) => 
     {props.children}
   </select>
 );
+
+export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  const { className = "", ...rest } = props;
+  return (
+    <textarea
+      className={`w-full border rounded px-2 py-2 text-sm ${className}`}
+      {...rest}
+    />
+  );
+}

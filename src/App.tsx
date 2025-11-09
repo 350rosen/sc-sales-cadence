@@ -1,6 +1,6 @@
 // src/App.tsx
 import { Routes, Route, NavLink, useLocation, Navigate } from "react-router-dom";
-import { LayoutDashboard, Handshake, Users, Building2, Percent } from "lucide-react";
+import { LayoutDashboard, Handshake, Users, Building2, Percent, Mail } from "lucide-react";
 import { useState } from "react";
 
 import Dashboard from "./pages/Dashboard";
@@ -9,6 +9,7 @@ import Contacts from "./pages/Contacts";
 import Companies from "./pages/Companies";
 import CommissionSchedules from "./pages/CommissionSchedules";
 import MyDeals from "./pages/MyDeals";
+import Communications from "./pages/Communications";
 import AccountManagementPage from "./pages/AccountManagementPage";
 import ResetPassword from "./pages/ResetPassword";
 
@@ -21,7 +22,6 @@ import { AuthService } from "./services/authService";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import ProtectedRoute from "./auth/ProtectedRoute";
 import { useRole } from "./services/useRole";
-
 
 /* ---------------- Fullscreen loader ---------------- */
 function FullScreenLoading() {
@@ -38,7 +38,10 @@ function FullScreenLoading() {
 function RoleGate() {
   const { role, loading } = useRole();
   if (loading) return <FullScreenLoading />;
-  return role === "admin" ? <AdminAppShell /> : <RepAppShell />;
+
+  if (role === "admin") return <AdminAppShell />;
+  if (role === "sdev") return <SdevAppShell />;
+  return <RepAppShell />;
 }
 
 /* ---------- Sidebar (admin shell) ---------- */
@@ -98,12 +101,58 @@ function Sidebar() {
             </>
           )}
         </NavLink>
+        {/* NEW: Communications for admin too */}
+        <NavLink to="/communications" className={({ isActive }) => link(isActive)}>
+          {({ isActive }) => (
+            <>
+              <Mail size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
+              Communications
+            </>
+          )}
+        </NavLink>
       </nav>
     </aside>
   );
 }
 
-/* ---------- Top Bar (used by both shells) ---------- */
+/* ---------- Rep Sidebar (rep shell) ---------- */
+function RepSidebar() {
+  const link = (isActive: boolean) =>
+    `flex items-center gap-2 px-3 py-2 rounded-md text-sm ${
+      isActive
+        ? "bg-sc-lightgreen/15 text-sc-green font-medium"
+        : "text-sc-delft/80 hover:bg-sc-lightgreen/10"
+    }`;
+
+  return (
+    <aside className="fixed left-0 top-0 h-screen w-56 border-r border-sc-delft/15 bg-sc-white flex flex-col">
+      <div className="h-16 flex items-center gap-3 px-4 border-b border-sc-delft/15">
+        <div className="h-9 w-9 rounded bg-sc-green text-sc-white grid place-items-center font-bold">S</div>
+        <div className="font-semibold text-sc-delft">Rep</div>
+      </div>
+      <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
+        <NavLink to="/my-deals" className={({ isActive }) => link(isActive)}>
+          {({ isActive }) => (
+            <>
+              <Handshake size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
+              My Deals
+            </>
+          )}
+        </NavLink>
+        <NavLink to="/communications" className={({ isActive }) => link(isActive)}>
+          {({ isActive }) => (
+            <>
+              <Mail size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
+              Communications
+            </>
+          )}
+        </NavLink>
+      </nav>
+    </aside>
+  );
+}
+
+/* ---------- Top Bar (used by all shells) ---------- */
 function TopBar() {
   const [openAdd, setOpenAdd] = useState(false);
   const [openExport, setOpenExport] = useState(false);
@@ -111,13 +160,16 @@ function TopBar() {
   const location = useLocation();
   const { role } = useRole();
 
-  const onMyDealsPage = location.pathname.startsWith("/my-deals");
+  // Hide CTAs on pages that aren't deal-centric
+  const path = location.pathname;
+  const hideCtas = path.startsWith("/my-deals") || path.startsWith("/communications");
+
   const notifyReload = () => localStorage.setItem("reload-deals", String(Date.now()));
 
   return (
     <>
       <header className="h-16 sticky top-0 z-40 flex items-center justify-between px-4 border-b border-sc-delft/15 bg-sc-white">
-        {!onMyDealsPage ? (
+        {!hideCtas ? (
           <div className="flex items-center gap-3">
             <Button onClick={() => setOpenAdd(true)}>Add New Deal</Button>
             <Button variant="secondary" onClick={() => setOpenExport(true)}>
@@ -141,17 +193,17 @@ function TopBar() {
               </NavLink>
             )}
 
-        <button
-          className="ml-2 text-xs text-sc-delft/70 underline hover:text-sc-orange"
-          onClick={() => AuthService.signOut()}
-        >
-          Sign out
-        </button>
+            <button
+              className="ml-2 text-xs text-sc-delft/70 underline hover:text-sc-orange"
+              onClick={() => AuthService.signOut()}
+            >
+              Sign out
+            </button>
           </div>
         </div>
       </header>
 
-      {!onMyDealsPage && (
+      {!hideCtas && (
         <>
           <Modal open={openAdd} title="Add Deal" onClose={() => setOpenAdd(false)}>
             <AddDealExtendedForm
@@ -187,6 +239,7 @@ function AdminAppShell() {
             <Route path="/contacts" element={<Contacts />} />
             <Route path="/companies" element={<Companies />} />
             <Route path="/commissions" element={<CommissionSchedules />} />
+            <Route path="/communications" element={<Communications />} />
             <Route path="/account" element={<AccountManagementPage />} />
           </Routes>
         </main>
@@ -195,16 +248,37 @@ function AdminAppShell() {
   );
 }
 
-/* ---------- Rep shell ---------- */
+/* ---------- Rep shell (with rep sidebar) ---------- */
 function RepAppShell() {
+  return (
+    <div className="h-screen bg-sc-offwhite">
+      <aside className="fixed left-0 top-0 h-screen w-56 border-r border-sc-delft/15 bg-sc-white">
+        <RepSidebar />
+      </aside>
+      <div className="pl-56 h-screen flex flex-col">
+        <TopBar />
+        <main className="flex-1 overflow-y-auto p-6">
+          <Routes>
+            <Route path="/" element={<Navigate to="/my-deals" replace />} />
+            <Route path="/my-deals" element={<MyDeals />} />
+            <Route path="/communications" element={<Communications />} />
+          </Routes>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Sdev shell (only Communications) ---------- */
+function SdevAppShell() {
   return (
     <div className="h-screen bg-sc-offwhite">
       <div className="pl-0 h-screen flex flex-col">
         <TopBar />
         <main className="flex-1 overflow-y-auto p-6">
           <Routes>
-            <Route path="/" element={<Navigate to="/my-deals" replace />} />
-            <Route path="/my-deals" element={<MyDeals />} />
+            <Route path="/" element={<Navigate to="/communications" replace />} />
+            <Route path="/communications" element={<Communications />} />
           </Routes>
         </main>
       </div>
