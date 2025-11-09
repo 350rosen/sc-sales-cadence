@@ -2,6 +2,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
+const LOGIN_PATH = "https://sc-sales-cadence.vercel.app"; // <-- change if your login route is different
+const REDIRECT_SECONDS = 4;   // countdown length
+
 export default function ResetPassword() {
   const [ready, setReady] = useState(false);
   const [allowed, setAllowed] = useState(false); // whether we can show the form
@@ -11,11 +14,18 @@ export default function ResetPassword() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Read tokens from hash (#...) OR query (?...)
+  const [success, setSuccess] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(REDIRECT_SECONDS);
+
+  // Read tokens from hash (#...) OR query (?...).
   const tokens = useMemo(() => {
     const raw =
-      (typeof window !== "undefined" && window.location.hash?.startsWith("#") && window.location.hash.slice(1)) ||
-      (typeof window !== "undefined" && window.location.search?.startsWith("?") && window.location.search.slice(1)) ||
+      (typeof window !== "undefined" &&
+        window.location.hash?.startsWith("#") &&
+        window.location.hash.slice(1)) ||
+      (typeof window !== "undefined" &&
+        window.location.search?.startsWith("?") &&
+        window.location.search.slice(1)) ||
       "";
     const params = new URLSearchParams(raw);
     return {
@@ -62,8 +72,8 @@ export default function ResetPassword() {
   }, [tokens]);
 
   const canSubmit = useMemo(
-    () => allowed && pw1.length >= 8 && pw1 === pw2 && !busy,
-    [allowed, pw1, pw2, busy]
+    () => allowed && pw1.length >= 8 && pw1 === pw2 && !busy && !success,
+    [allowed, pw1, pw2, busy, success]
   );
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -76,15 +86,39 @@ export default function ResetPassword() {
     try {
       const { error } = await supabase.auth.updateUser({ password: pw1 });
       if (error) throw error;
-      setMsg("Password updated. You can now sign in with your new password.");
-      // Optional redirect after success:
-      // setTimeout(() => (window.location.href = "/"), 1000);
+
+      // Immediately sign out so the next page is a clean login
+      await supabase.auth.signOut();
+
+      setSuccess(true);
+      setMsg("Password updated. You’re all set to sign in with your new password.");
     } catch (e: any) {
       setErr(e?.message ?? "Failed to set password.");
     } finally {
       setBusy(false);
     }
   };
+
+  // Handle success countdown + redirect in same tab
+  useEffect(() => {
+    if (!success) return;
+
+    setSecondsLeft(REDIRECT_SECONDS);
+
+    const interval = setInterval(() => {
+      setSecondsLeft((s) => {
+        if (s <= 1) {
+          clearInterval(interval);
+          // Replace to avoid navigating back to reset page
+          window.location.replace(LOGIN_PATH);
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [success]);
 
   // Centered minimal layout
   if (!ready) {
@@ -106,6 +140,27 @@ export default function ResetPassword() {
     );
   }
 
+  // Success screen
+  if (success) {
+    return (
+      <FullCenter>
+        <Card>
+          <div className="flex flex-col items-center text-center">
+            <CheckIcon />
+            <h1 className="mt-3 mb-2 text-2xl font-semibold">Password updated</h1>
+            <p className="text-sm text-emerald-700">
+              You’re good to log in now. We’ll take you to the sign-in page automatically.
+            </p>
+            <p className="mt-3 text-xs text-slate-600" aria-live="polite">
+              Redirecting to login in {secondsLeft}s…
+            </p>
+          </div>
+        </Card>
+      </FullCenter>
+    );
+  }
+
+  // Form
   return (
     <FullCenter>
       <Card>
@@ -121,6 +176,7 @@ export default function ResetPassword() {
               minLength={8}
               autoComplete="new-password"
               required
+              disabled={busy}
             />
           </div>
           <div>
@@ -133,6 +189,7 @@ export default function ResetPassword() {
               minLength={8}
               autoComplete="new-password"
               required
+              disabled={busy}
             />
           </div>
 
@@ -167,5 +224,20 @@ function Card({ children }: { children: React.ReactNode }) {
     <div className="w-full max-w-sm rounded-xl border bg-white p-6 shadow">
       {children}
     </div>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      className="h-10 w-10 text-emerald-600"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      aria-hidden="true"
+    >
+      <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
