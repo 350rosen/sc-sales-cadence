@@ -8,6 +8,9 @@ import Deals from "./pages/Deals";
 import Contacts from "./pages/Contacts";
 import Companies from "./pages/Companies";
 import CommissionSchedules from "./pages/CommissionSchedules";
+import MyDeals from "./pages/MyDeals";
+import AccountManagementPage from "./pages/AccountManagementPage";
+import ResetPassword from "./pages/ResetPassword";
 
 import Modal from "./components/forms/Modal";
 import AddDealExtendedForm from "./components/forms/DealForm";
@@ -18,8 +21,6 @@ import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import ProtectedRoute from "./auth/ProtectedRoute";
 import { supabase } from "./lib/supabaseClient";
 import { useRole } from "./services/useRole";
-
-import AccountManagementPage from "./pages/AccountManagementPage";
 
 /* ---------------- Fullscreen loader ---------------- */
 function FullScreenLoading() {
@@ -35,7 +36,7 @@ function FullScreenLoading() {
 /* ---------------- Role gate: wait before rendering any shell ---------------- */
 function RoleGate() {
   const { role, loading } = useRole();
-  if (loading) return <FullScreenLoading />;     // ← prevents “rep” flash for admins
+  if (loading) return <FullScreenLoading />;
   return role === "admin" ? <AdminAppShell /> : <RepAppShell />;
 }
 
@@ -57,19 +58,44 @@ function Sidebar() {
 
       <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
         <NavLink to="/" end className={({ isActive }) => link(isActive)}>
-          {({ isActive }) => (<><LayoutDashboard size={18} className={isActive ? "text-sc-orange" : "text-sc-green"}/>Dashboard</>)}
+          {({ isActive }) => (
+            <>
+              <LayoutDashboard size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
+              Dashboard
+            </>
+          )}
         </NavLink>
         <NavLink to="/deals" className={({ isActive }) => link(isActive)}>
-          {({ isActive }) => (<><Handshake size={18} className={isActive ? "text-sc-orange" : "text-sc-green"}/>Deals</>)}
+          {({ isActive }) => (
+            <>
+              <Handshake size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
+              Deals
+            </>
+          )}
         </NavLink>
         <NavLink to="/contacts" className={({ isActive }) => link(isActive)}>
-          {({ isActive }) => (<><Users size={18} className={isActive ? "text-sc-orange" : "text-sc-green"}/>Contacts</>)}
+          {({ isActive }) => (
+            <>
+              <Users size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
+              Contacts
+            </>
+          )}
         </NavLink>
         <NavLink to="/companies" className={({ isActive }) => link(isActive)}>
-          {({ isActive }) => (<><Building2 size={18} className={isActive ? "text-sc-orange" : "text-sc-green"}/>Companies</>)}
+          {({ isActive }) => (
+            <>
+              <Building2 size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
+              Companies
+            </>
+          )}
         </NavLink>
         <NavLink to="/commissions" className={({ isActive }) => link(isActive)}>
-          {({ isActive }) => (<><Percent size={18} className={isActive ? "text-sc-orange" : "text-sc-green"}/>Commission Schedules</>)}
+          {({ isActive }) => (
+            <>
+              <Percent size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
+              Commission Schedules
+            </>
+          )}
         </NavLink>
       </nav>
     </aside>
@@ -84,17 +110,12 @@ function TopBar() {
   const location = useLocation();
   const { role } = useRole();
 
-  // Flicker-free: purely route-based
   const onMyDealsPage = location.pathname.startsWith("/my-deals");
-
-  const notifyReload = () => {
-    localStorage.setItem("reload-deals", String(Date.now()));
-  };
+  const notifyReload = () => localStorage.setItem("reload-deals", String(Date.now()));
 
   return (
     <>
       <header className="h-16 sticky top-0 z-40 flex items-center justify-between px-4 border-b border-sc-delft/15 bg-sc-white">
-        {/* Hide actions entirely on /my-deals */}
         {!onMyDealsPage ? (
           <div className="flex items-center gap-3">
             <Button onClick={() => setOpenAdd(true)}>Add New Deal</Button>
@@ -111,16 +132,10 @@ function TopBar() {
             <div className="h-8 w-8 rounded-full bg-sc-delft text-white grid place-items-center">
               {(session?.user?.email ?? "U").slice(0, 1).toUpperCase()}
             </div>
-
-            <span className="text-sm text-sc-delft">
-              {session?.user?.email ?? "Signed in"}
-            </span>
+            <span className="text-sm text-sc-delft">{session?.user?.email ?? "Signed in"}</span>
 
             {role === "admin" && (
-              <NavLink
-                to="/account"
-                className="ml-2 text-xs text-sc-delft/70 underline hover:text-sc-green"
-              >
+              <NavLink to="/account" className="ml-2 text-xs text-sc-delft/70 underline hover:text-sc-green">
                 Account
               </NavLink>
             )}
@@ -135,7 +150,6 @@ function TopBar() {
         </div>
       </header>
 
-      {/* Don’t even mount modals on /my-deals */}
       {!onMyDealsPage && (
         <>
           <Modal open={openAdd} title="Add Deal" onClose={() => setOpenAdd(false)}>
@@ -147,11 +161,7 @@ function TopBar() {
             />
           </Modal>
 
-          <Modal
-            open={openExport}
-            title="Export Commissions"
-            onClose={() => setOpenExport(false)}
-          >
+          <Modal open={openExport} title="Export Commissions" onClose={() => setOpenExport(false)}>
             <ExportCommissionsModal onDone={() => setOpenExport(false)} />
           </Modal>
         </>
@@ -184,17 +194,15 @@ function AdminAppShell() {
   );
 }
 
-/* ---------- Rep shell (your “My Deals” page) ---------- */
-import MyDeals from "./pages/MyDeals"; // your rep page component
-
+/* ---------- Rep shell ---------- */
 function RepAppShell() {
   return (
     <div className="h-screen bg-sc-offwhite">
       <div className="pl-0 h-screen flex flex-col">
-        <TopBar /> {/* we’ll make TopBar route-aware below */}
+        <TopBar />
         <main className="flex-1 overflow-y-auto p-6">
           <Routes>
-            <Route path="/" element={<Navigate to="/my-deals" replace />} />  {/* NEW */}
+            <Route path="/" element={<Navigate to="/my-deals" replace />} />
             <Route path="/my-deals" element={<MyDeals />} />
           </Routes>
         </main>
@@ -203,13 +211,26 @@ function RepAppShell() {
   );
 }
 
-/* ---------- App (auth-wrapped) ---------- */
+/* ---------- Protected App wrapper ---------- */
+function ProtectedApp() {
+  return (
+    <ProtectedRoute>
+      <RoleGate />
+    </ProtectedRoute>
+  );
+}
+
+/* ---------- App (public + protected routing) ---------- */
 export default function App() {
   return (
     <AuthProvider>
-      <ProtectedRoute>
-        <RoleGate />   {/* ← wait for role before rendering any UI */}
-      </ProtectedRoute>
+      <Routes>
+        {/* Public, no shell */}
+        <Route path="/reset-password" element={<ResetPassword />} />
+
+        {/* Everything else is protected */}
+        <Route path="/*" element={<ProtectedApp />} />
+      </Routes>
     </AuthProvider>
   );
 }
