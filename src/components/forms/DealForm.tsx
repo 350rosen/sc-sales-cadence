@@ -3,6 +3,7 @@ import Papa from "papaparse";
 import FileDropzone from "../files/FileDropzone";
 import { supabase } from "../../lib/supabaseClient";
 import { Button } from "../ui";
+import CreateCustomerForm from "./CreateCustomerForm";
 
 /* ---------------- Types ---------------- */
 
@@ -133,7 +134,6 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
   const [selectedCustomer, setSelectedCustomer] = useState<StripeCustomerLite | null>(null);
   const [, setSelectedCustomerFull] = useState<StripeCustomerFull | null>(null);
   const [showCreateCustomer, setShowCreateCustomer] = useState(false);
-  const [newCustomerEmail, setNewCustomerEmail] = useState("");
 
   // Rep options
   const [repOptions, setRepOptions] = useState<string[]>([]);
@@ -307,32 +307,6 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
       }));
     } catch (e) {
       console.error("Failed to prefill from Stripe:", e);
-    }
-  }
-
-  async function createStripeCustomer() {
-    setCustomerLoading(true);
-    try {
-      const res = await fetch("/api/stripe/customers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: form.name || customerQuery || "New Customer",
-          email: newCustomerEmail || undefined,
-        }),
-      });
-      const c: StripeCustomerLite | { error?: string } = await res.json();
-      if ((c as any).error) throw new Error((c as any).error);
-      const cust = c as StripeCustomerLite;
-      setSelectedCustomer(cust);
-      setCustomerOptions([cust]);
-      setCustomerQuery(`${cust.name}${cust.email ? ` (${cust.email})` : ""}`);
-      setShowCreateCustomer(false);
-      await handleSelectCustomer(cust);
-    } catch (e: any) {
-      alert(e.message || "Failed to create customer");
-    } finally {
-      setCustomerLoading(false);
     }
   }
 
@@ -550,27 +524,36 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
             )}
 
             {!customerLoading && customerQuery && customerOptions.length === 0 && !showCreateCustomer && (
-              <button type="button" className="mt-2 text-sm underline" onClick={() => setShowCreateCustomer(true)}>
+              <button
+                type="button"
+                className="mt-2 text-sm underline"
+                onClick={() => setShowCreateCustomer(true)}
+              >
                 Create new customer “{customerQuery}”
               </button>
             )}
 
             {showCreateCustomer && (
-              <div className="mt-2 border rounded p-3 space-y-2">
-                <div className="text-sm">Create Stripe customer as “{customerQuery || "New Customer"}”</div>
-                <input
-                  className="w-full border rounded px-2 py-1"
-                  placeholder="Account email"
-                  type="email"
-                  value={newCustomerEmail}
-                  onChange={(e) => setNewCustomerEmail(e.target.value)}
+              <div className="mt-2">
+                <CreateCustomerForm
+                  // prefill from what the user typed in the search box
+                  defaultName={customerQuery || form.name || "New Customer"}
+                  // optional email prefill if you parse one from the query string somewhere else
+                  defaultEmail={""}
+                  onCancel={() => setShowCreateCustomer(false)}
+                  onCreated={async (cust) => {
+                    // `cust` should be { id: string; name: string; email: string }
+                    const lite = cust as StripeCustomerLite;
+
+                    setSelectedCustomer(lite);
+                    setCustomerOptions([lite]);
+                    setCustomerQuery(`${lite.name || ""}${lite.email ? ` (${lite.email})` : ""}`);
+                    setShowCreateCustomer(false);
+
+                    // hydrate address + contacts from Stripe into the rest of the form
+                    await handleSelectCustomer(lite);
+                  }}
                 />
-                <div className="flex gap-2">
-                  <Button onClick={createStripeCustomer} disabled={customerLoading}>
-                    {customerLoading ? "Creating…" : "Create"}
-                  </Button>
-                  <Button variant="secondary" onClick={() => setShowCreateCustomer(false)}>Cancel</Button>
-                </div>
               </div>
             )}
 
