@@ -22,12 +22,12 @@ type DealInsert = {
   close_date: string | null;
 
   main_contact: string | null;
-  main_contact_title: string | null; // we won’t show in UI
+  main_contact_title: string | null;
   main_contact_email: string | null;
   main_contact_phone: string | null;
 
   billing_contact_name: string | null;
-  billing_contact_title: string | null; // we won’t show in UI
+  billing_contact_title: string | null;
   billing_contact_email: string | null;
   billing_contact_phone: string | null;
 
@@ -80,11 +80,13 @@ const toNumber = (v: unknown): number | null => {
   const n = Number(String(v).replace(/[^0-9.\-]/g, ""));
   return Number.isFinite(n) ? n : null;
 };
+
 const toDateYYYYMMDD = (v?: string): string | null => {
   if (!v) return null;
   const d = String(v).trim().split(" ")[0];
   return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
 };
+
 const truthy = (v?: string) => /^(true|1|yes)$/i.test(String(v ?? "").trim());
 
 function preferAddress(c: StripeCustomerFull): StripeAddr {
@@ -162,18 +164,68 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
   // Address display (read-only)
   const [addrDisplay, setAddrDisplay] = useState<{ line1?: string; line2?: string; city?: string; state?: string; postal?: string } | null>(null);
 
+  // Derived flags (defined early to avoid TDZ issues)
+  const readyForDealEntry = !!selectedCustomer;
+
+  /* ----- API helpers ----- */
+
+  async function createInvoiceForDeal(
+    dealId: number,
+    stripeCustomerId: string,
+    amountUsd: number,
+    description?: string
+  ) {
+    try {
+      const res = await fetch("/api/invoices/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stripeCustomerId,
+          amountUsd,
+          description,
+        }),
+      });
+      if (!res.ok) throw new Error(`Invoice API failed (${res.status})`);
+
+      const inv: {
+        id?: string;
+        number?: string;
+        hosted_invoice_url?: string;
+        dashboard_url?: string;
+      } = await res.json();
+
+      // Persist invoice identifiers on the deal (columns should be nullable text)
+      await supabase
+        .from("deals")
+        .update({
+          invoice_number: inv.number ?? null,
+          invoice_id: inv.id ?? null,                  // ensure column exists
+          invoice_url: inv.hosted_invoice_url ?? null, // ensure column exists
+        } as any)
+        .eq("id", dealId);
+    } catch (err) {
+      console.error("Create invoice failed:", err);
+      // optional: surface a toast; don’t block deal creation if invoice step fails
+    }
+  }
+
   /* ----- Effects ----- */
+
+  useEffect(() => {
+  if (defaultRep && defaultRep !== defaultRepCsv) {
+    setDefaultRepCsv(defaultRep);
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [defaultRep]);
 
   // Load rep options: first try `reps` table, else distinct from deals
   useEffect(() => {
     (async () => {
       let reps: string[] = [];
-      // Try a `reps` table (name column)
       const { data: r1 } = await supabase.from("reps").select("name").order("name", { ascending: true });
       if (r1 && r1.length) {
-        reps = r1.map(x => x.name).filter(Boolean);
+        reps = r1.map((x: { name: string }) => x.name).filter(Boolean);
       } else {
-        // Fallback: distinct reps from deals
         const { data: r2 } = await supabase
           .from("deals")
           .select("account_rep")
@@ -181,14 +233,13 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
           .order("account_rep", { ascending: true });
         if (r2 && r2.length) {
           const set = new Set<string>();
-          for (const row of r2) if (row.account_rep) set.add(row.account_rep);
+          for (const row of r2 as { account_rep: string | null }[]) if (row.account_rep) set.add(row.account_rep);
           reps = Array.from(set.values());
         }
       }
       setRepOptions(reps);
-      // default selection from header if provided
       if (defaultRep && !form.account_rep) {
-        setForm(f => ({ ...f, account_rep: defaultRep }));
+        setForm((f) => ({ ...f, account_rep: defaultRep }));
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -197,14 +248,17 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
   // Keep form.account_rep synced to incoming header default if it changes
   useEffect(() => {
     if (defaultRep && form.account_rep !== defaultRep) {
-      setForm(f => ({ ...f, account_rep: defaultRep }));
+      setForm((f) => ({ ...f, account_rep: defaultRep }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultRep]);
 
   // Search Stripe customers
   useEffect(() => {
-    if (!customerQuery) { setCustomerOptions([]); return; }
+    if (!customerQuery) {
+      setCustomerOptions([]);
+      return;
+    }
     const t = setTimeout(async () => {
       setCustomerLoading(true);
       try {
@@ -232,30 +286,20 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
       setSelectedCustomerFull(full);
 
       const d = deriveFromStripe(full);
-
       setAddrDisplay(d.addressLines);
 
       setForm((f) => ({
         ...f,
-        // company + geo stored, but not editable inputs
         name: d.companyName || f.name,
         city: d.addressLines.city || f.city,
         state: d.addressLines.state || f.state,
-
-        // rep defaults to header; can be changed via dropdown (unless lockRep)
         account_rep: defaultRep ?? f.account_rep,
-
-        // lock unpaid
         stage: "unpaid",
-
-        // main contact (editable)
-        main_contact:       d.main.name  || f.main_contact,
+        main_contact: d.main.name || f.main_contact,
         main_contact_title: f.main_contact_title,
         main_contact_email: d.main.email || f.main_contact_email,
         main_contact_phone: d.main.phone || f.main_contact_phone,
-
-        // prefill billing (user can override if “different”)
-        billing_contact_name:  d.billing.name  || f.billing_contact_name,
+        billing_contact_name: d.billing.name || f.billing_contact_name,
         billing_contact_title: f.billing_contact_title,
         billing_contact_email: d.billing.email || f.billing_contact_email,
         billing_contact_phone: d.billing.phone || f.billing_contact_phone,
@@ -265,7 +309,6 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
     }
   }
 
-  // Create (simple) Stripe customer — unchanged from your prior flow
   async function createStripeCustomer() {
     setCustomerLoading(true);
     try {
@@ -286,7 +329,7 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
       setShowCreateCustomer(false);
       await handleSelectCustomer(cust);
     } catch (e: any) {
-      alert(e.message || "Failed to create Stripe customer");
+      alert(e.message || "Failed to create customer");
     } finally {
       setCustomerLoading(false);
     }
@@ -306,11 +349,10 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
       close_date: form.close_date || null,
 
       main_contact: form.main_contact || null,
-      main_contact_title: null, // not used
+      main_contact_title: null,
       main_contact_email: form.main_contact_email || null,
       main_contact_phone: form.main_contact_phone || null,
 
-      // if not different, we store nulls for distinct billing contact
       billing_contact_name:  billingDifferent ? (form.billing_contact_name  || null) : null,
       billing_contact_title: null,
       billing_contact_email: billingDifferent ? (form.billing_contact_email || null) : null,
@@ -319,18 +361,49 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
       stripe_customer_id: selectedCustomer?.id ?? null,
     };
 
-    const { error } = await supabase.from("deals").insert(payload);
-    setBusy(false);
-    if (error) setErr(error.message);
-    else onDone();
+    // 1) Create the deal
+    const { data, error } = await supabase
+      .from("deals")
+      .insert(payload)
+      .select("id")
+      .single();
+
+    if (error) {
+      setBusy(false);
+      setErr(error.message);
+      return;
+    }
+
+    const dealId = data!.id;
+
+    // 2) Create invoice (optional) then save identifiers
+    try {
+      if (selectedCustomer?.id && form.value && Number(form.value) > 0) {
+        await createInvoiceForDeal(
+          dealId,
+          selectedCustomer.id,
+          Number(form.value),
+          form.name || undefined
+        );
+      }
+    } finally {
+      setBusy(false);
+      onDone();
+    }
   }
 
-  /* ---------------- CSV Mode (unchanged) ---------------- */
+  /* ---------------- CSV Mode ---------------- */
 
   const [defaultRepCsv, setDefaultRepCsv] = useState(defaultRep ?? "");
   const [csvRows, setCsvRows] = useState<DealInsert[]>([]);
   const [parseErr, setParseErr] = useState<string | null>(null);
-  const canImport = useMemo(() => csvRows.length > 0 && !busy, [csvRows, busy]);
+
+  const canImport = useMemo(() => {
+  const hasFile = csvRows.length > 0;
+  const hasRep = Boolean(defaultRepCsv || (lockRep && defaultRep));
+  return hasFile && hasRep && !busy;
+}, [csvRows.length, defaultRepCsv, lockRep, defaultRep, busy]);
+
 
   function parseCsvFile(file: File) {
     setParseErr(null);
@@ -344,30 +417,31 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
           setParseErr(res.errors[0]?.message || "CSV parse error");
           return;
         }
+
         const filtered = (res.data as CsvRow[]).filter((r) => {
-          const status = (r["Status"] ?? "").toLowerCase().trim();
+          const status = (r[HEADERS.status] ?? "").toLowerCase().trim();
           const isDraft = status.includes("draft");
           const isVoidedByStatus = status === "void" || status === "voided" || status.includes("void");
-          const isVoidedByField = !!String(r["Voided At (UTC)"] ?? "").trim();
+          const isVoidedByField = !!String(r[HEADERS.voidedAt] ?? "").trim();
           return !(isDraft || isVoidedByStatus || isVoidedByField);
         });
 
         const mapped: DealInsert[] = filtered.map((r) => {
-          const paid = truthy(r["Paid"]);
-          const name = r["Customer Name"]?.trim() || r["Customer"]?.trim() || "";
-          const value = toNumber(r["Total"]) ?? toNumber(r["Amount Due"]);
+          const paid = truthy(r[HEADERS.paid]);
+          const name = r[HEADERS.customerName]?.trim() || r[HEADERS.customer]?.trim() || "";
+          const value = toNumber(r[HEADERS.total]) ?? toNumber(r[HEADERS.amountDue]);
           return {
-            invoice_number: r["Number"]?.trim() || null,
+            invoice_number: r[HEADERS.invoiceNumber]?.trim() || null,
             name: name || null,
-            city: r["Customer Address City"]?.trim() || null,
-            state: r["Customer Address State"]?.trim() || null,
+            city: r[HEADERS.city]?.trim() || null,
+            state: r[HEADERS.state]?.trim() || null,
             account_rep: defaultRepCsv ? defaultRepCsv : null,
             value,
             stage: paid ? "paid" : "unpaid",
-            close_date: toDateYYYYMMDD(r["Date (UTC)"]),
+            close_date: toDateYYYYMMDD(r[HEADERS.dateUtc]),
             main_contact: null,
             main_contact_title: null,
-            main_contact_email: r["Customer Email"]?.trim() || null,
+            main_contact_email: r[HEADERS.customerEmail]?.trim() || null,
             main_contact_phone: null,
             billing_contact_name: null,
             billing_contact_title: null,
@@ -406,9 +480,17 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
     onDone();
   }
 
-  /* ---------------- Render ---------------- */
+  /* ---------------- Guards / Derived ---------------- */
 
-  const readyForDealEntry = !!selectedCustomer;
+  const canSaveManual = useMemo(() => {
+    if (!readyForDealEntry) return false; // must pick a Stripe customer first
+    const hasRep = Boolean(form.account_rep || defaultRep);     // allow header default when lockRep
+    const hasValue = String(form.value).trim() !== "";          // change to Number(form.value) > 0 if desired
+    const hasCloseDate = String(form.close_date).trim() !== "";
+    return hasRep && hasValue && hasCloseDate && !busy;
+  }, [readyForDealEntry, form.account_rep, form.value, form.close_date, defaultRep, busy]);
+
+  /* ---------------- Render ---------------- */
 
   return (
     <div className="space-y-4">
@@ -422,7 +504,7 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
         <>
           {/* Stripe Customer */}
           <div>
-            <div className="mb-2 font-medium text-sc-delft">Stripe Customer</div>
+            <div className="mb-2 font-medium text-sc-delft">Customer</div>
             <input
               className="mt-1 w-full border rounded px-2 py-1"
               placeholder="Search name or email…"
@@ -506,20 +588,24 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
             {/* Rep dropdown (under the green text & address) */}
             {readyForDealEntry && (
               <div className="mt-3">
-                <label className="text-sm">Rep
-                  <select
-                    name="account_rep"
-                    className={`mt-1 w-full border rounded px-2 py-1 ${lockRep ? "bg-gray-50" : ""}`}
-                    value={form.account_rep}
-                    onChange={handle}
-                    disabled={!!lockRep}
-                  >
-                    <option value="">Select a rep…</option>
-                    {repOptions.map((r) => (
-                      <option key={r} value={r}>{r}</option>
-                    ))}
-                  </select>
+                <label className="block font-medium text-sm text-gray-700">
+                  Rep <span className="text-red-500">*</span>
                 </label>
+                <select
+                  name="account_rep"
+                  required={!lockRep} // if it's locked, we accept defaultRep via header
+                  className={`mt-1 w-full border rounded px-2 py-1 ${lockRep ? "bg-gray-50" : ""}`}
+                  value={form.account_rep}
+                  onChange={handle}
+                  disabled={!!lockRep}
+                >
+                  <option value="">Select a rep…</option>
+                  {repOptions.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
               </div>
             )}
           </div>
@@ -531,16 +617,32 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
               <div>
                 <div className="mb-2 font-medium text-sc-delft">Deal</div>
                 <div className="grid grid-cols-2 gap-3">
-                  <label className="text-sm">Value (USD)
-                    <input name="value" type="number" min="0" className="mt-1 w-full border rounded px-2 py-1" value={form.value} onChange={handle}/>
+                  <label className="text-sm">
+                    Value (USD) <span className="text-red-500">*</span>
+                    <input
+                      name="value"
+                      type="number"
+                      className="mt-1 w-full border rounded px-2 py-1"
+                      required
+                      value={form.value}
+                      onChange={handle}
+                    />
                   </label>
                   <label className="text-sm">Stage
                     <select name="stage" className="mt-1 w-full border rounded px-2 py-1 bg-gray-50" value="unpaid" disabled>
                       <option value="unpaid">Unpaid</option>
                     </select>
                   </label>
-                  <label className="text-sm col-span-2">Close Date
-                    <input name="close_date" type="date" className="mt-1 w-full border rounded px-2 py-1" value={form.close_date} onChange={handle}/>
+                  <label className="text-sm col-span-2">
+                    Close Date <span className="text-red-500">*</span>
+                    <input
+                      name="close_date"
+                      type="date"
+                      className="mt-1 w-full border rounded px-2 py-1"
+                      required
+                      value={form.close_date}
+                      onChange={handle}
+                    />
                   </label>
                 </div>
               </div>
@@ -592,10 +694,16 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
               </div>
 
               {err && <div className="text-sm text-red-600">{err}</div>}
-              <div className="flex justify-end gap-2">
-                <Button variant="secondary" onClick={onDone}>Close</Button>
-                <Button onClick={submitManual} disabled={busy}>{busy ? "Saving…" : "Save Deal"}</Button>
-              </div>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    onClick={submitManual}
+                    disabled={!canSaveManual}
+                    className={!canSaveManual ? "opacity-50 cursor-not-allowed" : ""}
+                    title={!canSaveManual ? "Select a customer and fill Rep, Value, and Close Date" : ""}
+                  >
+                    {busy ? "Saving…" : "Save Deal"}
+                  </Button>
+                </div>
             </>
           )}
         </>
@@ -610,17 +718,26 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
                 help="Drag & drop or click to browse. Accepted: .csv (Stripe export)."
               />
             </div>
-            {!lockRep && (
-              <label className="text-sm col-span-2">
-                Apply this Rep to all rows (optional)
-                <input
-                  className="mt-1 w-full border rounded px-2 py-1"
-                  value={defaultRepCsv}
-                  onChange={(e) => setDefaultRepCsv(e.target.value)}
-                  placeholder="e.g., Daniel Goldfinger"
-                />
-              </label>
-            )}
+            <label className="text-sm col-span-2">
+              Rep (applies to all imported rows) <span className="text-red-500">*</span>
+              <select
+                className={`mt-1 w-full border rounded px-2 py-1 ${lockRep ? "bg-gray-50" : ""}`}
+                value={defaultRepCsv}
+                onChange={(e) => setDefaultRepCsv(e.target.value)}
+                required
+                disabled={!!lockRep}
+              >
+                <option value="">
+                  {lockRep ? "Rep locked by header" : "Select a rep…"}
+                </option>
+                {repOptions.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+              <div className="text-xs text-gray-500 mt-1">
+                This rep will be set on every imported deal.
+              </div>
+            </label>
           </div>
 
           {parseErr && <div className="text-sm text-red-600">{parseErr}</div>}
@@ -662,12 +779,16 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
           )}
 
           {err && <div className="text-sm text-red-600">{err}</div>}
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={onDone}>Close</Button>
-            <Button onClick={importCsv} disabled={!canImport}>
-              {busy ? "Importing…" : `Import ${csvRows.length} Deal${csvRows.length === 1 ? "" : "s"}`}
-            </Button>
-          </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                onClick={importCsv}
+                disabled={!canImport}
+                className={!canImport ? "opacity-50 cursor-not-allowed" : ""}
+                title={!canImport ? "Add a CSV file and select a Rep to continue" : ""}
+              >
+                {busy ? "Importing…" : `Import ${csvRows.length} Deal${csvRows.length === 1 ? "" : "s"}`}
+              </Button>
+            </div>
         </>
       )}
     </div>

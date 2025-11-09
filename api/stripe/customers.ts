@@ -1,7 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import Stripe from 'stripe';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2024-06-20' });
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: '2024-06-20' as Stripe.LatestApiVersion,
+});
 
 function esc(q: string) {
   return q.replace(/'/g, "\\'");
@@ -125,7 +127,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         name: name || 'New Customer',
         email: accountEmail || undefined,
         description: description || undefined,
-        currency: (currency || 'usd').toLowerCase(),
+//         currency: (currency || 'usd').toLowerCase(),
         tax_exempt,
         // Customer "billing address" is just `address` on the customer
         address: billingAddress || undefined,
