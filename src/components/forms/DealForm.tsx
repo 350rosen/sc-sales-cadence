@@ -130,7 +130,7 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
   const [customerOptions, setCustomerOptions] = useState<StripeCustomerLite[]>([]);
   const [customerLoading, setCustomerLoading] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<StripeCustomerLite | null>(null);
-  const [selectedCustomerFull, setSelectedCustomerFull] = useState<StripeCustomerFull | null>(null);
+  const [, setSelectedCustomerFull] = useState<StripeCustomerFull | null>(null);
   const [showCreateCustomer, setShowCreateCustomer] = useState(false);
   const [newCustomerEmail, setNewCustomerEmail] = useState("");
 

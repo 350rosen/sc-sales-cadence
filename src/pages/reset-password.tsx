@@ -1,18 +1,40 @@
+// src/pages/reset-password.tsx
 import { useEffect } from 'react';
-import { useRouter } from 'next/router';
-import { createClient } from '../utils/supabase/client';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
 
 export default function ResetPassword() {
-  const router = useRouter();
-  const supabase = createClient();
+  const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
-    supabase.auth.onAuthStateChange(async (event) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        router.push('/update-password');
-      }
-    });
-  }, [supabase, router]);
+    // Supabase sends tokens in the URL hash fragment
+    const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const access_token = params.get('access_token');
+    const refresh_token = params.get('refresh_token');
+    const type = params.get('type'); // 'recovery' for password reset
 
-  return <p>Verifying your reset link…</p>;
+    async function handle() {
+      if (access_token && refresh_token) {
+        try {
+          await supabase.auth.setSession({ access_token, refresh_token });
+          // For reset links, send them to your password update screen
+          if (type === 'recovery') {
+            navigate('/update-password', { replace: true });
+          } else {
+            navigate('/', { replace: true });
+          }
+        } catch {
+          navigate('/login', { replace: true });
+        }
+      } else {
+        // No tokens in the hash → send to login
+        navigate('/login', { replace: true });
+      }
+    }
+
+    handle();
+  }, [location.hash, navigate]);
+
+  return <p>Verifying your link…</p>;
 }
