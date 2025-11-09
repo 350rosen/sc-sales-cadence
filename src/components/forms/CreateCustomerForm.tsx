@@ -11,7 +11,6 @@ export default function CreateCustomerForm({ onDone }: { onDone?: () => void }) 
   const [companyName, setCompanyName] = useState("");
   const [companyEmail, setCompanyEmail] = useState("");
   const [description, setDescription] = useState("");
-  const [taxStatus, setTaxStatus] = useState<"none" | "exempt">("none");
 
   // Optional primary contact
   const [primaryContactName, setPrimaryContactName] = useState("");
