@@ -20,7 +20,6 @@ import { Button } from "./components/ui";
 import { AuthService } from "./services/authService";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import ProtectedRoute from "./auth/ProtectedRoute";
-import { supabase } from "./lib/supabaseClient";
 import { useRole } from "./services/useRole";
 
 
