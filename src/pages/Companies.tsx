@@ -288,11 +288,11 @@ export default function Companies() {
         <div className="grid md:grid-cols-2 gap-4">
           {/* Left: Stripe panel */}
           <Card className="p-6 space-y-3">
-            <div className="text-base font-semibold">Customer (Stripe)</div>
+            <div className="text-base font-semibold">Customer Overview</div>
             <div className="text-sm">Customer ID: {selected.stripeCustomerId ?? "N/A"}</div>
 
             {!selected.stripeCustomerId ? (
-              <div className="text-sm text-sc-delft/60">No Stripe customer linked.</div>
+              <div className="text-sm text-sc-delft/60">No customer linked.</div>
             ) : loadingStripe ? (
               <div className="text-sm text-sc-delft/60">Loading customer…</div>
             ) : stripeDetails ? (
@@ -346,7 +346,7 @@ export default function Companies() {
 
           {/* Right: quick stats */}
           <Card className="p-6 space-y-2">
-            <div className="text-base font-semibold">Overview</div>
+            <div className="text-base font-semibold">Deal Overview</div>
             <div className="text-sm"><strong>Rep:</strong> {selected.rep}</div>
             <div className="text-sm">
               <strong>Last Activity:</strong>{" "}
@@ -453,6 +453,7 @@ export default function Companies() {
                 <thead className="bg-sc-delft/5 text-sc-delft/70">
                   <tr>
                     <th className="text-left px-4 py-2">ID</th>
+                    <th className="text-left px-4 py-2">Invoice Number</th>
                     <th className="text-left px-4 py-2">Stage</th>
                     <th className="text-right px-4 py-2">Value</th>
                     <th className="text-left px-4 py-2">Rep</th>
@@ -463,8 +464,9 @@ export default function Companies() {
                   {filteredDeals.map(d => (
                     <tr key={d.id} className="border-t border-sc-delft/10">
                       <td className="px-4 py-2 font-mono text-xs">{d.id}</td>
+                      <td className="px-4 py-2 font-mono text-xs">{d.invoice_id}</td>
                       <td className="px-4 py-2">{d.stage ?? "—"}</td>
-                      <td className="px-4 py-2 text-right">{d.value != null ? d.value.toLocaleString() : "—"}</td>
+                      <td className="px-4 py-2 text-right">${d.value != null ? d.value.toLocaleString() : "—"}</td>
                       <td className="px-4 py-2">{d.account_rep ?? "Unassigned"}</td>
                       <td className="px-4 py-2">{d.close_date ? new Date(d.close_date).toLocaleDateString() : "—"}</td>
                     </tr>
