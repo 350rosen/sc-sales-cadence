@@ -1,16 +1,11 @@
 import { useState } from "react";
-import { supabase } from "../../lib/supabaseClient";
-import { Button, Input, Select } from "../ui";
+import { Button, Input, Select, Card } from "../ui";
 
 /**
- * A lightweight customer creation form used inside the Communications page.
- * Calls /api/stripe/customers (POST) to create a new Stripe + local record.
+ * Creates a Stripe customer via /api/stripe/customers (POST).
+ * Styling mirrors the Deal form: bordered sections + header rows.
  */
-export default function CreateCustomerForm({
-  onDone,
-}: {
-  onDone?: () => void;
-}) {
+export default function CreateCustomerForm({ onDone }: { onDone?: () => void }) {
   const [name, setName] = useState("");
   const [accountEmail, setAccountEmail] = useState("");
   const [description, setDescription] = useState("");
@@ -42,15 +37,8 @@ export default function CreateCustomerForm({
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to create");
 
-      // Optionally insert into your own Supabase companies table
-      await supabase.from("companies").insert({
-        id: data.id, // stripe id
-        name: data.name,
-        email: data.email,
-      });
-
       setSuccess(true);
-      if (onDone) onDone();
+      onDone?.();
     } catch (e: any) {
       setErr(e?.message || "Unknown error");
     } finally {
@@ -59,71 +47,56 @@ export default function CreateCustomerForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3">
+    <form onSubmit={handleSubmit} className="space-y-4">
       {err && <div className="text-sm text-red-600">Error: {err}</div>}
-      {success && (
-        <div className="text-sm text-green-600">Customer created successfully.</div>
-      )}
+      {success && <div className="text-sm text-green-600">Customer created successfully.</div>}
 
-      <label className="block text-sm">
-        Customer Name
-        <Input
-          className="mt-1 w-full"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          required
-        />
-      </label>
+      <Card className="border border-sc-delft/20 rounded-md">
+        <div className="px-4 py-3 border-b border-sc-delft/10 font-semibold text-sc-delft">
+          Customer Info
+        </div>
+        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <label className="text-sm">
+            Customer Name
+            <Input className="mt-1 w-full" value={name} onChange={(e) => setName(e.target.value)} required />
+          </label>
 
-      <label className="block text-sm">
-        Account Email
-        <Input
-          className="mt-1 w-full"
-          type="email"
-          value={accountEmail}
-          onChange={(e) => setAccountEmail(e.target.value)}
-          required
-        />
-      </label>
+          <label className="text-sm">
+            Account Email
+            <Input className="mt-1 w-full" type="email" value={accountEmail} onChange={(e) => setAccountEmail(e.target.value)} required />
+          </label>
 
-      <label className="block text-sm">
-        Description
-        <Input
-          className="mt-1 w-full"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-      </label>
+          <label className="text-sm md:col-span-2">
+            Description
+            <Input className="mt-1 w-full" value={description} onChange={(e) => setDescription(e.target.value)} />
+          </label>
+        </div>
+      </Card>
 
-      <label className="block text-sm">
-        Billing Email (optional)
-        <Input
-          className="mt-1 w-full"
-          type="email"
-          value={billingEmail}
-          onChange={(e) => setBillingEmail(e.target.value)}
-        />
-      </label>
+      <Card className="border border-sc-delft/20 rounded-md">
+        <div className="px-4 py-3 border-b border-sc-delft/10 font-semibold text-sc-delft">
+          Billing & Tax
+        </div>
+        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <label className="text-sm">
+            Billing Email (optional)
+            <Input className="mt-1 w-full" type="email" value={billingEmail} onChange={(e) => setBillingEmail(e.target.value)} />
+          </label>
 
-      <label className="block text-sm">
-        Tax Status
-        <Select
-          className="mt-1 w-full"
-          value={taxStatus}
-          onChange={(e) =>
-            setTaxStatus(e.target.value as "none" | "exempt")
-          }
-        >
-          <option value="none">Taxable (None)</option>
-          <option value="exempt">Exempt</option>
-        </Select>
-      </label>
-
-      <div className="pt-3 flex justify-end">
-        <Button type="submit" disabled={loading}>
-          {loading ? "Creating…" : "Create Customer"}
-        </Button>
-      </div>
+          <label className="text-sm">
+            Tax Status
+            <Select className="mt-1 w-full" value={taxStatus} onChange={(e) => setTaxStatus(e.target.value as "none" | "exempt")}>
+              <option value="none">Taxable (None)</option>
+              <option value="exempt">Exempt</option>
+            </Select>
+          </label>
+        </div>
+        <div className="px-4 pb-4 flex justify-end">
+          <Button type="submit" disabled={loading}>
+            {loading ? "Creating…" : "Create Customer"}
+          </Button>
+        </div>
+      </Card>
     </form>
   );
 }

@@ -5,6 +5,7 @@ import Modal from "../components/forms/Modal";
 import CreateCustomerForm from "../components/forms/CreateCustomerForm";
 import { useRole } from "../services/useRole";
 
+
 /* ---------------- Types ---------------- */
 type CustomerLite = { id: string; name: string; email?: string | null };
 type Contact = {
@@ -197,18 +198,14 @@ export default function Communications() {
   /* -------- View -------- */
   return (
     <section className="space-y-4">
-      <PageHeader
-        title="Communications"
-        cta={
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => setOpenCreateCustomer(true)}>
-              Create Customer
-            </Button>
-            {/* Intentionally NO "Create Deal" here; TopBar still has Add New Deal */}
-          </div>
-        }
-      />
-
+    <PageHeader
+      title="Communications"
+      cta={
+        <div className="flex gap-2">
+          <Button onClick={() => setOpenCreateCustomer(true)}>Create Customer</Button>
+        </div>
+      }
+    />
       <Card className="p-3 text-sm text-sc-delft/70">
         {roleLoading ? "Loading role…" : <>Signed in as <b>{repName || "—"}</b>. Send intros and track outbound emails (pre-deal).</>}
       </Card>

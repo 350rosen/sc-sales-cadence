@@ -1,4 +1,3 @@
-// src/App.tsx
 import { Routes, Route, NavLink, useLocation, Navigate } from "react-router-dom";
 import { LayoutDashboard, Handshake, Users, Building2, Percent, Mail } from "lucide-react";
 import { useState } from "react";
@@ -34,7 +33,7 @@ function FullScreenLoading() {
   );
 }
 
-/* ---------------- Role gate: wait before rendering any shell ---------------- */
+/* ---------------- Role gate ---------------- */
 function RoleGate() {
   const { role, loading } = useRole();
   if (loading) return <FullScreenLoading />;
@@ -48,9 +47,7 @@ function RoleGate() {
 function Sidebar() {
   const link = (isActive: boolean) =>
     `flex items-center gap-2 px-3 py-2 rounded-md text-sm ${
-      isActive
-        ? "bg-sc-lightgreen/15 text-sc-green font-medium"
-        : "text-sc-delft/80 hover:bg-sc-lightgreen/10"
+      isActive ? "bg-sc-lightgreen/15 text-sc-green font-medium" : "text-sc-delft/80 hover:bg-sc-lightgreen/10"
     }`;
 
   return (
@@ -62,66 +59,31 @@ function Sidebar() {
 
       <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
         <NavLink to="/" end className={({ isActive }) => link(isActive)}>
-          {({ isActive }) => (
-            <>
-              <LayoutDashboard size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
-              Dashboard
-            </>
-          )}
+          {({ isActive }) => (<><LayoutDashboard size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />Dashboard</>)}
         </NavLink>
         <NavLink to="/deals" className={({ isActive }) => link(isActive)}>
-          {({ isActive }) => (
-            <>
-              <Handshake size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
-              Deals
-            </>
-          )}
+          {({ isActive }) => (<><Handshake size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />Deals</>)}
         </NavLink>
         <NavLink to="/contacts" className={({ isActive }) => link(isActive)}>
-          {({ isActive }) => (
-            <>
-              <Users size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
-              Contacts
-            </>
-          )}
+          {({ isActive }) => (<><Users size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />Contacts</>)}
         </NavLink>
         <NavLink to="/companies" className={({ isActive }) => link(isActive)}>
-          {({ isActive }) => (
-            <>
-              <Building2 size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
-              Companies
-            </>
-          )}
+          {({ isActive }) => (<><Building2 size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />Companies</>)}
         </NavLink>
         <NavLink to="/commissions" className={({ isActive }) => link(isActive)}>
-          {({ isActive }) => (
-            <>
-              <Percent size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
-              Commission Schedules
-            </>
-          )}
+          {({ isActive }) => (<><Percent size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />Commission Schedules</>)}
         </NavLink>
-        {/* NEW: Communications for admin too */}
-        <NavLink to="/communications" className={({ isActive }) => link(isActive)}>
-          {({ isActive }) => (
-            <>
-              <Mail size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
-              Communications
-            </>
-          )}
-        </NavLink>
+        {/* NOTE: Communications removed from admin UI */}
       </nav>
     </aside>
   );
 }
 
-/* ---------- Rep Sidebar (rep shell) ---------- */
+/* ---------- Rep Sidebar ---------- */
 function RepSidebar() {
   const link = (isActive: boolean) =>
     `flex items-center gap-2 px-3 py-2 rounded-md text-sm ${
-      isActive
-        ? "bg-sc-lightgreen/15 text-sc-green font-medium"
-        : "text-sc-delft/80 hover:bg-sc-lightgreen/10"
+      isActive ? "bg-sc-lightgreen/15 text-sc-green font-medium" : "text-sc-delft/80 hover:bg-sc-lightgreen/10"
     }`;
 
   return (
@@ -132,53 +94,35 @@ function RepSidebar() {
       </div>
       <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
         <NavLink to="/my-deals" className={({ isActive }) => link(isActive)}>
-          {({ isActive }) => (
-            <>
-              <Handshake size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
-              My Deals
-            </>
-          )}
+          {({ isActive }) => (<><Handshake size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />My Deals</>)}
         </NavLink>
         <NavLink to="/communications" className={({ isActive }) => link(isActive)}>
-          {({ isActive }) => (
-            <>
-              <Mail size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />
-              Communications
-            </>
-          )}
+          {({ isActive }) => (<><Mail size={18} className={isActive ? "text-sc-orange" : "text-sc-green"} />Communications</>)}
         </NavLink>
       </nav>
     </aside>
   );
 }
 
-/* ---------- Top Bar (used by all shells) ---------- */
+/* ---------- Top Bar (role-based CTAs) ---------- */
 function TopBar() {
   const [openAdd, setOpenAdd] = useState(false);
   const [openExport, setOpenExport] = useState(false);
   const { session } = useAuth();
-  const location = useLocation();
   const { role } = useRole();
 
-  // Hide CTAs on pages that aren't deal-centric
-  const path = location.pathname;
-  const hideCtas = path.startsWith("/my-deals") || path.startsWith("/communications");
-
+  const showCtas = role === "admin"; // only admins see Add / Export
   const notifyReload = () => localStorage.setItem("reload-deals", String(Date.now()));
 
   return (
     <>
       <header className="h-16 sticky top-0 z-40 flex items-center justify-between px-4 border-b border-sc-delft/15 bg-sc-white">
-        {!hideCtas ? (
+        {showCtas ? (
           <div className="flex items-center gap-3">
             <Button onClick={() => setOpenAdd(true)}>Add New Deal</Button>
-            <Button variant="secondary" onClick={() => setOpenExport(true)}>
-              Export Commissions
-            </Button>
+            <Button variant="secondary" onClick={() => setOpenExport(true)}>Export Commissions</Button>
           </div>
-        ) : (
-          <div />
-        )}
+        ) : <div />}
 
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
@@ -188,22 +132,17 @@ function TopBar() {
             <span className="text-sm text-sc-delft">{session?.user?.email ?? "Signed in"}</span>
 
             {role === "admin" && (
-              <NavLink to="/account" className="ml-2 text-xs text-sc-delft/70 underline hover:text-sc-green">
-                Account
-              </NavLink>
+              <NavLink to="/account" className="ml-2 text-xs text-sc-delft/70 underline hover:text-sc-green">Account</NavLink>
             )}
 
-            <button
-              className="ml-2 text-xs text-sc-delft/70 underline hover:text-sc-orange"
-              onClick={() => AuthService.signOut()}
-            >
+            <button className="ml-2 text-xs text-sc-delft/70 underline hover:text-sc-orange" onClick={() => AuthService.signOut()}>
               Sign out
             </button>
           </div>
         </div>
       </header>
 
-      {!hideCtas && (
+      {showCtas && (
         <>
           <Modal open={openAdd} title="Add Deal" onClose={() => setOpenAdd(false)}>
             <AddDealExtendedForm
@@ -239,7 +178,7 @@ function AdminAppShell() {
             <Route path="/contacts" element={<Contacts />} />
             <Route path="/companies" element={<Companies />} />
             <Route path="/commissions" element={<CommissionSchedules />} />
-            <Route path="/communications" element={<Communications />} />
+            {/* Communications intentionally NOT routed here */}
             <Route path="/account" element={<AccountManagementPage />} />
           </Routes>
         </main>
@@ -248,7 +187,7 @@ function AdminAppShell() {
   );
 }
 
-/* ---------- Rep shell (with rep sidebar) ---------- */
+/* ---------- Rep shell ---------- */
 function RepAppShell() {
   return (
     <div className="h-screen bg-sc-offwhite">
@@ -295,15 +234,12 @@ function ProtectedApp() {
   );
 }
 
-/* ---------- App (public + protected routing) ---------- */
+/* ---------- App ---------- */
 export default function App() {
   return (
     <AuthProvider>
       <Routes>
-        {/* Public, no shell */}
         <Route path="/reset-password" element={<ResetPassword />} />
-
-        {/* Everything else is protected */}
         <Route path="/*" element={<ProtectedApp />} />
       </Routes>
     </AuthProvider>
