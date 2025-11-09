@@ -17,10 +17,12 @@ import AddDealExtendedForm from "./components/forms/DealForm";
 import ExportCommissionsModal from "./components/forms/ExportCommissionsModal";
 import { Button } from "./components/ui";
 
+import { AuthService } from "./services/authService";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import ProtectedRoute from "./auth/ProtectedRoute";
 import { supabase } from "./lib/supabaseClient";
 import { useRole } from "./services/useRole";
+
 
 /* ---------------- Fullscreen loader ---------------- */
 function FullScreenLoading() {
@@ -140,12 +142,12 @@ function TopBar() {
               </NavLink>
             )}
 
-            <button
-              className="ml-2 text-xs text-sc-delft/70 underline hover:text-sc-orange"
-              onClick={() => supabase.auth.signOut()}
-            >
-              Sign out
-            </button>
+        <button
+          className="ml-2 text-xs text-sc-delft/70 underline hover:text-sc-orange"
+          onClick={() => AuthService.signOut()}
+        >
+          Sign out
+        </button>
           </div>
         </div>
       </header>

@@ -1,31 +1,56 @@
+import type { Session } from '@supabase/supabase-js';
 import { supabase } from "../lib/supabaseClient";
 
-export type Session = Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"];
+type Unsubscribe = () => void;
+
+function clearSupabaseLocal() {
+  // belt & suspenders: remove any lingering local entries
+  Object.keys(localStorage).forEach((k) => {
+    if (k.startsWith('sb-')) localStorage.removeItem(k);
+  });
+}
 
 export const AuthService = {
-  async getSession() {
+  async getSession(): Promise<Session | null> {
     const { data } = await supabase.auth.getSession();
-    return data.session;
+    return data.session ?? null;
   },
-  onAuthChange(callback: (session: Session) => void) {
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => callback(session));
-    return () => sub.subscription.unsubscribe();
+
+  onAuthChange(callback: (session: Session | null) => void): Unsubscribe {
+    const { data } = supabase.auth.onAuthStateChange((_e, session) => {
+      callback(session ?? null);
+    });
+    return () => data.subscription.unsubscribe();
   },
-  signOut() {
-    return supabase.auth.signOut();
+
+  async signOut(): Promise<void> {
+    // revoke tokens server-side
+    await supabase.auth.signOut(); // default scope "global"
+    // clear any cached local tokens from old clients/versions
+    clearSupabaseLocal();
+    // force a full reload so providers/shell reset immediately
+    window.location.replace('/');
   },
-  // pick one or add more providers
+
+  // OAuth example
   signInWithGoogle(redirectTo?: string) {
     return supabase.auth.signInWithOAuth({
       provider: "google",
       options: redirectTo ? { redirectTo } : undefined,
     });
   },
-  // email+link example
+
+  // magic link / OTP example
   signInWithEmail(email: string, redirectTo?: string) {
-    return supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo } });
+    return supabase.auth.signInWithOtp({
+      email,
+      options: redirectTo ? { emailRedirectTo: redirectTo } : undefined,
+    });
   },
+
   getUser() {
     return supabase.auth.getUser(); // { data: { user }, error }
   },
 };
+
+export type { Session };
