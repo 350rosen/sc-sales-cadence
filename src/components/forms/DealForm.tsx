@@ -557,20 +557,21 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
               </ul>
             )}
 
-            {!customerLoading && customerQuery && customerOptions.length === 0 && !showCreateCustomer && (
-              <div className="mt-2 flex items-center gap-3">
-                <Button onClick={quickCreateCustomer}>
-                  Create “{customerQuery}”
-                </Button>
-                <button
-                  type="button"
-                  className="text-sm underline"
-                  onClick={() => setShowCreateCustomer(true)}
-                >
-                  Open full form
-                </button>
-              </div>
-            )}
+            {!customerLoading &&
+              customerQuery &&
+              customerOptions.length === 0 &&
+              !showCreateCustomer && (
+                <div className="mt-2 text-sm text-gray-600">
+                  Can’t find a match?{" "}
+                  <button
+                    type="button"
+                    className="underline text-sc-delft hover:text-sc-delft/80"
+                    onClick={() => setShowCreateCustomer(true)}
+                  >
+                    Create “{customerQuery}”
+                  </button>
+                </div>
+              )}
 
             {showCreateCustomer && (
               <div className="mt-2">
