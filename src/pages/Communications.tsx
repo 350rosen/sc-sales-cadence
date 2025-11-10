@@ -7,13 +7,15 @@ import { useRole } from "../services/useRole";
 
 /* ---------------- Types ---------------- */
 type CustomerLite = { id: string; name: string; email?: string | null };
+
 type Contact = {
-  id: number;
-  name: string;
-  email: string;
+  id: string;                       // string for both DB ids ("123") and Stripe pseudo-ids ("stripe:main:cus_...")
+  name: string | null;
+  email: string | null;
   phone?: string | null;
-  customer_id?: string | null;   // Stripe customer id
-  customer_name?: string | null;
+  customer_id?: string | null;      // DB only
+  customer_name?: string | null;    // DB only
+  source: "db" | "stripe";
 };
 
 /* ---------------- Constants ---------------- */
@@ -33,6 +35,75 @@ const inputStyle =
   "mt-1 w-full border border-sc-delft/25 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sc-green/40 focus:border-sc-green/60";
 const labelStyle = "text-sm font-medium text-sc-delft";
 
+/* ---------------- Helpers ---------------- */
+const compact = (s?: string | null) => {
+  const t = (s ?? "").trim();
+  return t.length ? t : null;
+};
+
+const dedupeContacts = (items: Contact[]) => {
+  const seen = new Set<string>();
+  const out: Contact[] = [];
+  for (const c of items) {
+    const key =
+      (c.email?.toLowerCase() ?? "") + "|" + (c.phone ?? "") + "|" + (c.name?.toLowerCase() ?? "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+  }
+  return out;
+};
+
+const stripeToContacts = (full: any): Contact[] => {
+  if (!full) return [];
+  const cand: Contact[] = [];
+
+  // 1) Main customer
+  cand.push({
+    id: `stripe:main:${full.id}`,
+    name: compact(full.name),
+    email: compact(full.email),
+    phone: compact(full.phone),
+    source: "stripe",
+  });
+
+  // 2) Shipping
+  if (full.shipping) {
+    cand.push({
+      id: `stripe:ship:${full.id}`,
+      name: compact(full.shipping?.name),
+      email: null,
+      phone: compact(full.shipping?.phone),
+      source: "stripe",
+    });
+  }
+
+  // 3) Billing details (if your API returns it)
+  if (full.billing_details) {
+    cand.push({
+      id: `stripe:bill:${full.id}`,
+      name: compact(full.billing_details?.name),
+      email: compact(full.billing_details?.email),
+      phone: compact(full.billing_details?.phone),
+      source: "stripe",
+    });
+  }
+
+  // 4) Default PM billing details (common place to store contact)
+  const pmBill = full?.invoice_settings?.default_payment_method?.billing_details;
+  if (pmBill) {
+    cand.push({
+      id: `stripe:pm:${full.id}`,
+      name: compact(pmBill.name),
+      email: compact(pmBill.email),
+      phone: compact(pmBill.phone),
+      source: "stripe",
+    });
+  }
+
+  return dedupeContacts(cand.filter(c => c.name || c.email || c.phone));
+};
+
 /* ---------------- Component ---------------- */
 export default function Communications() {
   const { profile, loading: roleLoading } = useRole();
@@ -41,7 +112,7 @@ export default function Communications() {
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
-  const [selectedContactId, setSelectedContactId] = useState<number | "new" | "">("");
+  const [selectedContactId, setSelectedContactId] = useState<string | "new" | "">("");
   const [newContact, setNewContact] = useState<Partial<Contact>>({ name: "", email: "", phone: "" });
 
   const [templateKey, setTemplateKey] = useState(EMAIL_TEMPLATES[0].key);
@@ -60,7 +131,7 @@ export default function Communications() {
     [customers, selectedCustomerId]
   );
   const selectedContact = useMemo(
-    () => (typeof selectedContactId === "number" ? contacts.find(c => c.id === selectedContactId) || null : null),
+    () => contacts.find(c => c.id === selectedContactId) || null,
     [contacts, selectedContactId]
   );
 
@@ -89,33 +160,67 @@ export default function Communications() {
     return () => { cancel = true; };
   }, []);
 
-  /* -------- Load contacts (from communication_contacts) -------- */
+  /* -------- Load contacts (DB + Stripe) when customer changes -------- */
   useEffect(() => {
     let cancel = false;
     (async () => {
       try {
-        const { data, error } = await supabase
-          .from("communication_contacts")
-          .select("id,name,email,phone,customer_id,customer_name")
-          .order("name", { ascending: true });
+        setErr(null);
+        setSelectedContactId("");
 
-        if (error) {
-          if (error.code === "PGRST205") {
-            setErr("Table communication_contacts not found — create it in Supabase.");
-            setContacts([]);
-          } else {
-            throw error;
+        const merged: Contact[] = [];
+
+        // A) DB contacts for this customer (communication_contacts)
+        {
+          const { data, error } = await supabase
+            .from("communication_contacts")
+            .select("id,name,email,phone,customer_id,customer_name")
+            .order("name", { ascending: true });
+
+          if (error) {
+            if (error.code === "PGRST205") {
+              if (!cancel) setErr("Table communication_contacts not found — create it in Supabase.");
+            } else {
+              throw error;
+            }
           }
-          return;
+
+          const all = (data ?? []) as Array<{
+            id: number; name: string | null; email: string | null; phone?: string | null;
+            customer_id?: string | null; customer_name?: string | null;
+          }>;
+
+          const filtered = selectedCustomerId
+            ? all.filter(c => String(c.customer_id) === String(selectedCustomerId))
+            : all;
+
+          merged.push(
+            ...filtered.map(r => ({
+              id: String(r.id),
+              name: compact(r.name),
+              email: compact(r.email),
+              phone: compact(r.phone),
+              customer_id: r.customer_id ?? null,
+              customer_name: r.customer_name ?? null,
+              source: "db" as const,
+            }))
+          );
         }
 
-        if (cancel) return;
-        const all = (data ?? []) as Contact[];
-        const filtered = selectedCustomerId
-          ? all.filter(c => String(c.customer_id) === String(selectedCustomerId))
-          : all;
+        // B) Stripe-derived contacts for this Stripe customer
+        if (selectedCustomerId) {
+          const res = await fetch(`/api/stripe/customers?id=${encodeURIComponent(selectedCustomerId)}`);
+          const full = await res.json();
+          merged.push(...stripeToContacts(full));
+        }
 
-        setContacts(filtered);
+        const finalList = dedupeContacts(merged).sort((a, b) => {
+          const an = (a.name || a.email || "").toLowerCase();
+          const bn = (b.name || b.email || "").toLowerCase();
+          return an.localeCompare(bn);
+        });
+
+        if (!cancel) setContacts(finalList);
       } catch (e: any) {
         if (!cancel) setErr(e.message || "Failed to load contacts");
       }
@@ -129,10 +234,13 @@ export default function Communications() {
     setSentOk(false);
     setSending(true);
     try {
-      let contactId = typeof selectedContactId === "number" ? selectedContactId : null;
-      const contactName = selectedContact?.name || newContact.name || "";
-      const contactEmail = selectedContact?.email || newContact.email || "";
-      const contactPhone = selectedContact?.phone || newContact.phone || null;
+      const chosen = selectedContact;
+      const isDb = chosen?.source === "db";
+      let contactIdForLog: number | null = isDb && chosen?.id ? Number(chosen.id) : null;
+
+      const contactName = chosen?.name ?? newContact.name ?? "";
+      const contactEmail = chosen?.email ?? newContact.email ?? "";
+      const contactPhone = chosen?.phone ?? newContact.phone ?? null;
 
       if (selectedContactId === "new") {
         const { data, error } = await supabase
@@ -146,8 +254,24 @@ export default function Communications() {
           })
           .select("id")
           .single();
+
         if (error) throw new Error(error.message);
-        contactId = data?.id ?? null;
+        contactIdForLog = data?.id ?? null;
+
+        // add into local list and select it
+        setContacts(prev => dedupeContacts([
+          {
+            id: String(data.id),
+            name: contactName,
+            email: contactEmail,
+            phone: contactPhone,
+            customer_id: selectedCustomerId,
+            customer_name: selectedCustomer?.name ?? null,
+            source: "db",
+          },
+          ...prev,
+        ]));
+        setSelectedContactId(String(data.id));
       }
 
       const attach = ATTACHMENTS.find(a => a.key === attachmentKey);
@@ -175,7 +299,7 @@ export default function Communications() {
         rep_name: repName,
         customer_id: selectedCustomerId,
         customer_name: selectedCustomer?.name ?? null,
-        contact_id: contactId,
+        contact_id: contactIdForLog, // null when Stripe-only
         contact_name: contactName,
         contact_email: contactEmail,
         subject,
@@ -246,14 +370,32 @@ export default function Communications() {
               value={String(selectedContactId)}
               onChange={(e) => {
                 const v = e.target.value;
-                setSelectedContactId(v === "new" ? "new" : v ? Number(v) : "");
+                setSelectedContactId(v === "new" ? "new" : v || "");
               }}
               disabled={!selectedCustomerId}
             >
               <option value="">Select contact…</option>
-              {contacts.map(c => (
-                <option key={c.id} value={c.id}>{c.name} — {c.email}</option>
-              ))}
+
+              {contacts.some(c => c.source === "db") && (
+                <optgroup label="Saved in CRM">
+                  {contacts.filter(c => c.source === "db").map(c => (
+                    <option key={c.id} value={c.id}>
+                      {(c.name || c.email || "(No name)")}{c.email ? ` — ${c.email}` : ""}{c.phone ? ` — ${c.phone}` : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+
+              {contacts.some(c => c.source === "stripe") && (
+                <optgroup label="From Stripe">
+                  {contacts.filter(c => c.source === "stripe").map(c => (
+                    <option key={c.id} value={c.id}>
+                      {(c.name || c.email || "(No name)")}{c.email ? ` — ${c.email}` : ""}{c.phone ? ` — ${c.phone}` : ""} [Stripe]
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+
               <option value="new">+ Add new contact</option>
             </select>
           </label>
