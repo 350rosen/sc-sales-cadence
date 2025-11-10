@@ -19,7 +19,7 @@ type DealInsert = {
   state: string | null;
   account_rep: string | null;
   value: number | null;
-  stage: "paid" | "unpaid" | null;
+  stage: "paid" | "open" | null;
   close_date: string | null;
 
   main_contact: string | null;
@@ -147,7 +147,7 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
     state: "",
     account_rep: defaultRep ?? "",
     value: "",
-    stage: "unpaid" as "paid" | "unpaid",
+    stage: "open" as "paid" | "open",
     close_date: "",
 
     main_contact: "",
@@ -296,7 +296,7 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
         city: d.addressLines.city || f.city,
         state: d.addressLines.state || f.state,
         account_rep: defaultRep ?? f.account_rep,
-        stage: "unpaid",
+        stage: "open",
         main_contact: d.main.name || f.main_contact,
         main_contact_title: f.main_contact_title,
         main_contact_email: d.main.email || f.main_contact_email,
@@ -321,7 +321,7 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
       state: form.state || null,
       account_rep: form.account_rep || defaultRep || null,
       value: form.value ? Number(form.value) : null,
-      stage: "unpaid",
+      stage: "open",
       close_date: form.close_date || null,
 
       main_contact: form.main_contact || null,
@@ -406,7 +406,7 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
             state: r[HEADERS.state]?.trim() || null,
             account_rep: defaultRepCsv ? defaultRepCsv : null,
             value,
-            stage: paid ? "paid" : "unpaid",
+            stage: paid ? "paid" : "open",
             close_date: toDateYYYYMMDD(r[HEADERS.dateUtc]),
             main_contact: null,
             main_contact_title: null,
@@ -622,8 +622,8 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
                     />
                   </label>
                   <label className="text-sm">Stage
-                    <select name="stage" className="mt-1 w-full border rounded px-2 py-1 bg-gray-50" value="unpaid" disabled>
-                      <option value="unpaid">Unpaid</option>
+                    <select name="stage" className="mt-1 w-full border rounded px-2 py-1 bg-gray-50" value="open" disabled>
+                      <option value="open">open</option>
                     </select>
                   </label>
                   <label className="text-sm col-span-2">

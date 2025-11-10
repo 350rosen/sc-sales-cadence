@@ -6,12 +6,29 @@ import { Button, Card } from "../ui";
  * Required: Company Name, Company Email.
  * Optional: Primary Contact (name/title/phone), Billing Contact & Address (if different), Shipping.
  */
-export default function CreateCustomerForm({ onDone }: { onDone?: () => void }) {
+type Props = {
+  onDone?: () => void;
+  // Added props so AddDealExtendedForm can seed & control the create flow
+  defaultName?: string;
+  defaultEmail?: string;
+  onCancel?: () => void;
+  onCreated?: (cust: { id: string; name: string; email?: string | null }) => void | Promise<void>;
+};
+
+export default function CreateCustomerForm({
+  onDone,
+  defaultName,
+  defaultEmail,
+  onCancel,
+  onCreated,
+}: Props) {
   // Company
-  const [companyName, setCompanyName] = useState("");
-  const [companyEmail, setCompanyEmail] = useState("");
+  const [companyName, setCompanyName] = useState(defaultName ?? "");
+  const [companyEmail, setCompanyEmail] = useState(defaultEmail ?? "");
   const [description, setDescription] = useState("");
-  const [taxStatus, setTaxStatus] = useState<"none" | "exempt">("none");
+
+  // If you later add a UI control, swap back to useState tuple.
+  const [taxStatus] = useState<"none" | "exempt">("none"); // <- remove unused setter to fix TS6133
 
   // Optional primary contact
   const [primaryContactName, setPrimaryContactName] = useState("");
@@ -70,10 +87,10 @@ export default function CreateCustomerForm({ onDone }: { onDone?: () => void }) 
         name: companyName,            // company -> Stripe customer.name
         accountEmail: companyEmail,   // company email -> Stripe customer.email
         description,
-        taxStatus,
+        taxStatus,                    // "none" | "exempt"
       };
 
-      // Optional primary contact in metadata (server may ignore if not merged)
+      // Optional primary contact in metadata
       const meta: Record<string, string | undefined> = {
         primary_contact_name: primaryContactName || undefined,
         primary_contact_title: primaryContactTitle || undefined,
@@ -119,7 +136,6 @@ export default function CreateCustomerForm({ onDone }: { onDone?: () => void }) 
         }
       }
 
-      // include metadata if any keys present
       if (Object.values(meta).some(Boolean)) payload.metadata = meta;
 
       const res = await fetch("/api/stripe/customers", {
@@ -131,7 +147,15 @@ export default function CreateCustomerForm({ onDone }: { onDone?: () => void }) 
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to create");
 
+      // Normalize to what the caller expects
+      const created = {
+        id: data?.id ?? data?.customer?.id,
+        name: data?.name ?? data?.customer?.name ?? companyName,
+        email: data?.email ?? data?.customer?.email ?? companyEmail,
+      };
+
       setSuccess(true);
+      await onCreated?.(created);
       onDone?.();
     } catch (e: any) {
       setErr(e?.message || "Unknown error");
@@ -426,8 +450,11 @@ export default function CreateCustomerForm({ onDone }: { onDone?: () => void }) 
         )}
       </Card>
 
-      {/* Submit */}
-      <div className="flex justify-end">
+      {/* Submit / Cancel */}
+      <div className="flex justify-between">
+        <Button type="button" variant="secondary" onClick={onCancel}>
+          Cancel
+        </Button>
         <Button type="submit" disabled={loading}>
           {loading ? "Creating…" : "Create Customer"}
         </Button>
