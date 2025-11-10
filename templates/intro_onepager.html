@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Intro + One-Pager</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        color: #1a1a1a;
+        font-size: 15px;
+        line-height: 1.6;
+        background-color: #ffffff;
+        margin: 0;
+        padding: 24px;
+      }
+      a {
+        color: #0b6bcb;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      .signature {
+        margin-top: 24px;
+        color: #333333;
+      }
+    </style>
+  </head>
+  <body>
+    <p>Hi {{contactName}},</p>
+
+    <p>
+      I wanted to quickly introduce myself — I’m {{repName}} from
+      <strong>Sun Caddy</strong>. We make compact, hands-free mineral sunscreen
+      sticks designed for golfers and outdoor athletes.
+    </p>
+
+    <p>
+      I’ve attached our one-pager below so you can get a quick overview of what
+      makes Sun Caddy different and how it could fit at {{customerName}}.
+    </p>
+
+    <p>
+      If it looks interesting, I’d be happy to coordinate a short call or send
+      over a sample kit for you to check out.
+    </p>
+
+    <p class="signature">
+      Cheers,<br />
+      {{repName}}<br />
+      Sun Caddy<br />
+      <a href="https://suncaddy.com" target="_blank">suncaddy.com</a>
+    </p>
+  </body>
+</html>
