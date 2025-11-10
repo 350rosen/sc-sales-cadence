@@ -212,46 +212,6 @@ export default function AddDealExtendedForm({ onDone, defaultRep, lockRep }: Pro
     }
   }
 
-    async function quickCreateCustomer() {
-      if (!customerQuery.trim()) return;
-
-      setCustomerLoading(true);
-      try {
-        const res = await fetch("/api/stripe/customers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: customerQuery.trim(),
-            // If you later parse an email from the query, pass it as `email`
-          }),
-        });
-        if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          throw new Error(text || `Stripe customer create failed (${res.status})`);
-        }
-
-        const resp = await res.json();
-        const lite: StripeCustomerLite = {
-          id: resp.id,
-          name: resp.name || customerQuery.trim(),
-          email: resp.email || "",
-        };
-
-        setSelectedCustomer(lite);
-        setCustomerOptions([lite]);
-        setCustomerQuery(`${lite.name}${lite.email ? ` (${lite.email})` : ""}`);
-        setShowCreateCustomer(false);
-
-        await handleSelectCustomer(lite);
-      } catch (e) {
-        console.error(e);
-        setErr((e as any)?.message || "Failed to create customer");
-      } finally {
-        setCustomerLoading(false);
-      }
-    }
-
-
   /* ----- Effects ----- */
 
   // keep CSV rep default in sync (declared after CSV state is defined -> no TDZ)
