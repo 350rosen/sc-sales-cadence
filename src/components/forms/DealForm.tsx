@@ -4,7 +4,7 @@ import CustomerSearchSelect, { type StripeCustomerLite } from "../customers/Cust
 import { supabase } from "../../lib/supabaseClient";
 
 /* ---------------- Types ---------------- */
-export type DealFormProps = {
+export type Props = {
   onDone?: () => void;                // ✅ now optional
   defaultRepKey?: string | null;
   lockRep?: boolean;
@@ -89,7 +89,7 @@ function useStripeCustomer(stripeCustomerId?: string | null) {
 }
 
 /* ---------------- Component ---------------- */
-export default function DealForm({ onDone, defaultRepKey, lockRep }: DealFormProps) {
+export default function DealForm({ onDone, defaultRepKey, lockRep }: Props) {
   const [billingDifferent, setBillingDifferent] = useState<boolean>(false);
 
   const [deal, setDeal] = useState<DealInsert>({
