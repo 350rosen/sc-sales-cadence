@@ -7,7 +7,7 @@ export type RepOption = {
   id?: string | null;
   email?: string | null;
   name: string;
-  source: "profiles" | "commission_schedule" | "merged";
+  source: "profiles" | "commission_schedules" | "merged";
   active?: boolean | null;
 };
 
@@ -46,13 +46,13 @@ function useRepsOptions() {
         .select("id, full_name, email, active");
 
       const { data: comms, error: cErr } = await supabase
-        .from("commission_schedule")
+        .from("commission_schedules")
         .select("rep_id, rep_email, rep_name, active");
 
       if (pErr || cErr) {
         const msg = [
           pErr ? `profiles: ${pErr.message}` : null,
-          cErr ? `commission_schedule: ${cErr.message}` : null,
+          cErr ? `commission_schedules: ${cErr.message}` : null,
         ]
           .filter(Boolean)
           .join(" | ");
@@ -73,7 +73,7 @@ function useRepsOptions() {
         id: r.rep_id ?? null,
         email: r.rep_email ?? null,
         name: (r.rep_name && r.rep_name.trim()) || r.rep_email || "Unnamed rep",
-        source: "commission_schedule",
+        source: "commission_schedules",
         active: r.active ?? null,
       }));
 
