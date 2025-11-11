@@ -1,19 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RepSelect from "../reps/RepSelect";
-import CustomerSearchSelect, { type StripeCustomerLite } from "../customers/CustomerSearchSelect";
 import { supabase } from "../../lib/supabaseClient";
 
 /* ---------------- Types ---------------- */
-export type Props = {
-  onDone?: () => void;                // ✅ now optional
-  defaultRepKey?: string | null;
+export type DealFormProps = {
+  onDone?: () => void;
+  defaultRepKey?: string | null;   // used to prefill rep on first customer select
   lockRep?: boolean;
 };
 
 type DealInsert = {
   name: string | null;
   value: number | null;
-  stage: "open" | "paid" | null;
+  stage: "open";
   close_date: string | null;
   account_rep: string | null;
   main_contact_name: string | null;
@@ -33,6 +32,7 @@ type StripeAddress = {
   postal_code?: string | null;
   country?: string | null;
 };
+
 type StripeCustomerFull = {
   id: string;
   name?: string | null;
@@ -42,6 +42,8 @@ type StripeCustomerFull = {
   shipping?: { address?: StripeAddress | null } | null;
 };
 
+type StripeCustomerLite = { id: string; name: string; email: string };
+
 /* ---------------- Helpers ---------------- */
 const fmtAddr = (a?: StripeAddress | null) => {
   if (!a) return null;
@@ -49,7 +51,162 @@ const fmtAddr = (a?: StripeAddress | null) => {
   return parts.length ? parts.join(" • ") : null;
 };
 
-/* ---------------- Stripe hook ---------------- */
+/* ---------------- Inline CustomerSearchSelect ---------------- */
+function CustomerSearchSelect({
+  value,
+  onChange,
+  placeholder = "Search by name or email…",
+  className,
+}: {
+  value?: string | null;
+  onChange: (id: string | null, lite?: StripeCustomerLite | null) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  const [query, setQuery] = useState<string>("");
+  const [open, setOpen] = useState(false);
+  const [options, setOptions] = useState<StripeCustomerLite[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState<StripeCustomerLite | null>(null);
+  const acRef = useRef<AbortController | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+
+  // Load selected (by id) when value changes
+  useEffect(() => {
+    let cancelled = false;
+    if (!value) {
+      setSelected(null);
+      return;
+    }
+    (async () => {
+      try {
+        setLoading(true);
+        const res = await fetch(`/api/stripe/customers?id=${encodeURIComponent(value)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const full = (await res.json()) as any;
+        if (!cancelled) {
+          const lite: StripeCustomerLite = { id: full.id, name: full.name ?? "", email: full.email ?? "" };
+          setSelected(lite);
+          setLoading(false);
+        }
+      } catch {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [value]);
+
+  // Debounced search
+  useEffect(() => {
+    if (!open) return;
+    acRef.current?.abort();
+    const controller = new AbortController();
+    acRef.current = controller;
+
+    const t = setTimeout(async () => {
+      try {
+        setLoading(true);
+        const url = query ? `/api/stripe/customers?q=${encodeURIComponent(query)}` : `/api/stripe/customers`;
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const list = (await res.json()) as StripeCustomerLite[];
+        setOptions(list);
+        setLoading(false);
+      } catch (e: any) {
+        if (e?.name !== "AbortError") setLoading(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(t);
+  }, [query, open]);
+
+  // click outside to close
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!boxRef.current) return;
+      if (!boxRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const displayValue = useMemo(() => {
+    if (query) return query;
+    if (!selected) return "";
+    const label = selected.name || selected.email || selected.id;
+    return label;
+  }, [query, selected]);
+
+  return (
+    <div className={className} ref={boxRef}>
+      <label className="mb-1 block text-sm font-medium text-neutral-700">Customer</label>
+      <div className="relative">
+        <input
+          className="w-full rounded-xl border px-3 py-2 text-sm"
+          placeholder={placeholder}
+          value={displayValue}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+        />
+        {open && (
+          <div className="absolute z-20 mt-1 w-full rounded-xl border bg-white shadow">
+            {loading && <div className="px-3 py-2 text-sm text-neutral-500">Searching…</div>}
+            {!loading && options.length === 0 && (
+              <div className="px-3 py-2 text-sm text-neutral-500">No results</div>
+            )}
+            {!loading &&
+              options.map((opt) => {
+                const label = opt.name || opt.email || opt.id;
+                const sub = opt.name && opt.email ? opt.email : opt.name ? "" : opt.email;
+                return (
+                  <button
+                    type="button"
+                    key={opt.id}
+                    className="block w-full px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                    onClick={() => {
+                      setSelected(opt);
+                      setQuery("");
+                      setOpen(false);
+                      onChange(opt.id, opt);
+                    }}
+                  >
+                    <div className="font-medium">{label}</div>
+                    {sub ? <div className="text-xs text-neutral-500">{sub}</div> : null}
+                  </button>
+                );
+              })}
+            {!loading && (
+              <button
+                type="button"
+                className="block w-full px-3 py-2 text-left text-xs text-neutral-500 hover:bg-neutral-50"
+                onClick={() => {
+                  setSelected(null);
+                  setQuery("");
+                  setOpen(false);
+                  onChange(null, null);
+                }}
+              >
+                Clear selection
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      {selected?.id ? (
+        <p className="mt-1 text-xs text-neutral-500">
+          Selected: {selected.name || selected.email} — {selected.id}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/* ---------------- Stripe loader for address card ---------------- */
 function useStripeCustomer(stripeCustomerId?: string | null) {
   const [cust, setCust] = useState<StripeCustomerFull | null>(null);
   const [loading, setLoading] = useState<boolean>(!!stripeCustomerId);
@@ -88,14 +245,14 @@ function useStripeCustomer(stripeCustomerId?: string | null) {
   return { customer: cust, loading, error };
 }
 
-/* ---------------- Component ---------------- */
-export default function DealForm({ onDone, defaultRepKey, lockRep }: Props) {
+/* ---------------- Main Component ---------------- */
+export default function DealForm({ onDone, defaultRepKey, lockRep }: DealFormProps) {
   const [billingDifferent, setBillingDifferent] = useState<boolean>(false);
 
   const [deal, setDeal] = useState<DealInsert>({
     name: null,
     value: null,
-    stage: "open",
+    stage: "open", // locked
     close_date: null,
     account_rep: defaultRepKey ?? null,
     main_contact_name: null,
@@ -107,20 +264,43 @@ export default function DealForm({ onDone, defaultRepKey, lockRep }: Props) {
     stripe_customer_id: null,
   });
 
-  const { customer: stripe, loading: stripeLoading, error: stripeError } = useStripeCustomer(deal.stripe_customer_id ?? null);
+  const { customer: stripe, loading: stripeLoading, error: stripeError } =
+    useStripeCustomer(deal.stripe_customer_id ?? null);
 
-  const saveDisabled =
-    !deal.stage ||
-    !deal.account_rep ||
-    deal.value == null ||
-    Number.isNaN(Number(deal.value)) ||
-    Number(deal.value || 0) <= 0;
+  // Prefill main contact from Stripe on load/change
+  useEffect(() => {
+    if (!stripe) return;
+    setDeal((d) => ({
+      ...d,
+      name: stripe.name ?? d.name,
+      main_contact_name: stripe.name ?? d.main_contact_name,
+      main_contact_email: stripe.email ?? d.main_contact_email,
+      main_contact_phone: stripe.phone ?? d.main_contact_phone,
+      // Prefill rep if not chosen yet and a default is provided
+      account_rep: d.account_rep ?? defaultRepKey ?? null,
+    }));
+  }, [stripe, defaultRepKey]);
+
+  const shippingAddr = fmtAddr(stripe?.shipping?.address);
+  const billingAddr = fmtAddr(stripe?.address);
+  const anyAddr = shippingAddr || billingAddr;
+
+  // Validation: must have customer, rep, value>0, close_date, main_contact name+email
+  const saveDisabled = !(
+    deal.stripe_customer_id &&
+    deal.account_rep &&
+    deal.value != null &&
+    Number(deal.value) > 0 &&
+    deal.close_date &&
+    deal.main_contact_name &&
+    deal.main_contact_email
+  );
 
   const handleSave = useCallback(async () => {
     const payload = {
       name: deal.name,
       value: deal.value,
-      stage: deal.stage,
+      stage: "open",
       close_date: deal.close_date,
       account_rep: deal.account_rep,
       main_contact_name: deal.main_contact_name,
@@ -136,15 +316,12 @@ export default function DealForm({ onDone, defaultRepKey, lockRep }: Props) {
       alert(error.message);
       return;
     }
-    onDone?.();                // ✅ safe optional call
+    onDone?.();
   }, [deal, billingDifferent, onDone]);
-
-  const shippingAddr = fmtAddr(stripe?.shipping?.address);
-  const billingAddr = fmtAddr(stripe?.address);
-  const anyAddr = shippingAddr || billingAddr;
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold">Add Deal</h3>
         <div className="text-xs text-neutral-500">
@@ -152,32 +329,18 @@ export default function DealForm({ onDone, defaultRepKey, lockRep }: Props) {
         </div>
       </div>
 
-      {/* Customer selector using /api/stripe/customers */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <div className="md:col-span-1">
-          <CustomerSearchSelect
-            value={deal.stripe_customer_id ?? null}
-            onChange={(id: string | null, lite?: StripeCustomerLite | null) => {
-              setDeal((d) => ({
-                ...d,
-                stripe_customer_id: id,
-                name: d.name && d.name.trim().length > 0 ? d.name : (lite?.name || lite?.email || d.name),
-              }));
-            }}
-          />
-        </div>
-
-        <div className="md:col-span-2">
-          <label className="mb-1 block text-sm font-medium text-neutral-700">Customer / Company name</label>
-          <input
-            type="text"
-            placeholder="Acme District – 2025 renewal"
-            className="w-full rounded-xl border px-3 py-2 text-sm"
-            value={deal.name ?? ""}
-            onChange={(e) => setDeal((d) => ({ ...d, name: e.target.value || null }))}
-          />
-        </div>
-      </div>
+      {/* Single Customer field */}
+      <CustomerSearchSelect
+        value={deal.stripe_customer_id ?? null}
+        onChange={(id: string | null, lite?: StripeCustomerLite | null) => {
+          setDeal((d) => ({
+            ...d,
+            stripe_customer_id: id,
+            name: lite?.name || lite?.email || null,
+            // (rep prefill handled in effect using defaultRepKey)
+          }));
+        }}
+      />
 
       {/* Address card */}
       <div className="rounded-xl border bg-neutral-50 p-4">
@@ -188,8 +351,16 @@ export default function DealForm({ onDone, defaultRepKey, lockRep }: Props) {
           <>
             {anyAddr ? (
               <div className="space-y-1 text-sm">
-                {shippingAddr && <div><span className="font-medium">Shipping:</span> {shippingAddr}</div>}
-                {billingAddr && <div><span className="font-medium">Billing:</span> {billingAddr}</div>}
+                {shippingAddr && (
+                  <div>
+                    <span className="font-medium">Shipping:</span> {shippingAddr}
+                  </div>
+                )}
+                {billingAddr && (
+                  <div>
+                    <span className="font-medium">Billing:</span> {billingAddr}
+                  </div>
+                )}
               </div>
             ) : (
               <p className="text-sm text-neutral-500">No address on file.</p>
@@ -224,19 +395,6 @@ export default function DealForm({ onDone, defaultRepKey, lockRep }: Props) {
               }))
             }
           />
-        </div>
-
-        <div className="md:col-span-1">
-          <label className="mb-1 block text-sm font-medium text-neutral-700">Stage</label>
-          <select
-            className="w-full rounded-xl border px-3 py-2 text-sm"
-            value={deal.stage ?? ""}
-            onChange={(e) => setDeal((d) => ({ ...d, stage: (e.target.value as "open" | "paid") || null }))}
-          >
-            <option value="">Select stage…</option>
-            <option value="open">Open</option>
-            <option value="paid">Paid</option>
-          </select>
         </div>
 
         <div className="md:col-span-1">
@@ -290,7 +448,6 @@ export default function DealForm({ onDone, defaultRepKey, lockRep }: Props) {
         </label>
       </div>
 
-      {/* Billing contact fields */}
       {billingDifferent && (
         <div className="space-y-3 rounded-xl border p-4">
           <p className="text-sm font-semibold text-neutral-700">Billing contact</p>
@@ -320,9 +477,6 @@ export default function DealForm({ onDone, defaultRepKey, lockRep }: Props) {
 
       {/* Actions */}
       <div className="flex items-center justify-end gap-2 pt-2">
-        <button type="button" className="rounded-xl border px-4 py-2 text-sm" onClick={() => onDone?.()}>
-          Cancel
-        </button>
         <button
           type="button"
           className="rounded-xl bg-black px-4 py-2 text-sm text-white disabled:opacity-60"
