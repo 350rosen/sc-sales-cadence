@@ -8,11 +8,11 @@ type Props = {
   onDone: () => void;
   defaultRepKey?: string | null;
   lockRep?: boolean;
-  stripeCustomerId?: string | null;
+  stripeCustomerId?: string | null; // still accepted; seeds the field
 };
 
 type DealInsert = {
-  name: string | null;
+  name: string | null;                  // customer/company display name
   value: number | null;
   stage: "open" | "paid" | null;
   close_date: string | null;
@@ -23,7 +23,7 @@ type DealInsert = {
   billing_contact_name: string | null;
   billing_contact_email: string | null;
   billing_contact_phone: string | null;
-  stripe_customer_id?: string | null;
+  stripe_customer_id?: string | null;   // link to Stripe
 };
 
 type StripeAddress = {
@@ -34,7 +34,6 @@ type StripeAddress = {
   postal_code?: string | null;
   country?: string | null;
 };
-
 type StripeCustomerLite = {
   id: string;
   name?: string | null;
@@ -45,7 +44,7 @@ type StripeCustomerLite = {
 };
 
 /* ===== helpers ===== */
-function fmtAddr(a?: StripeAddress | null) {
+const fmtAddr = (a?: StripeAddress | null) => {
   if (!a) return null;
   const parts = [
     a.line1,
@@ -55,9 +54,9 @@ function fmtAddr(a?: StripeAddress | null) {
     a.country,
   ].filter(Boolean);
   return parts.length ? parts.join(" • ") : null;
-}
+};
 
-/* ===== stripe hook (inline) ===== */
+/* ===== stripe hook (uses value from form) ===== */
 function useStripeCustomer(stripeCustomerId?: string | null) {
   const [cust, setCust] = useState<StripeCustomerLite | null>(null);
   const [loading, setLoading] = useState<boolean>(!!stripeCustomerId);
@@ -98,11 +97,10 @@ function useStripeCustomer(stripeCustomerId?: string | null) {
 
 /* ===== component ===== */
 export default function DealForm({ onDone, defaultRepKey, lockRep, stripeCustomerId }: Props) {
-  const { customer: stripe, loading: stripeLoading, error: stripeError } = useStripeCustomer(stripeCustomerId);
   const [billingDifferent, setBillingDifferent] = useState<boolean>(false);
 
   const [deal, setDeal] = useState<DealInsert>({
-    name: null,
+    name: null,                       // display name for the customer/company
     value: null,
     stage: "open",
     close_date: null,
@@ -115,6 +113,9 @@ export default function DealForm({ onDone, defaultRepKey, lockRep, stripeCustome
     billing_contact_phone: null,
     stripe_customer_id: stripeCustomerId ?? null,
   });
+
+  // now the address card reads from the field inside the form:
+  const { customer: stripe, loading: stripeLoading, error: stripeError } = useStripeCustomer(deal.stripe_customer_id ?? null);
 
   const saveDisabled =
     !deal.stage ||
@@ -129,7 +130,7 @@ export default function DealForm({ onDone, defaultRepKey, lockRep, stripeCustome
       value: deal.value,
       stage: deal.stage,
       close_date: deal.close_date,
-      account_rep: deal.account_rep, // email or id
+      account_rep: deal.account_rep,
       main_contact_name: deal.main_contact_name,
       main_contact_email: deal.main_contact_email,
       main_contact_phone: deal.main_contact_phone,
@@ -152,11 +153,52 @@ export default function DealForm({ onDone, defaultRepKey, lockRep, stripeCustome
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">Create Deal</h3>
-        <div className="text-xs text-neutral-500">{stripeCustomerId ? `Stripe: ${stripeCustomerId}` : "No Stripe customer"}</div>
+        <h3 className="text-lg font-semibold">Add Deal</h3>
+        <div className="text-xs text-neutral-500">
+          {deal.stripe_customer_id ? `Stripe: ${deal.stripe_customer_id}` : "No Stripe customer"}
+        </div>
       </div>
 
+      {/* NEW: Customer section */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="md:col-span-1">
+          <label className="mb-1 block text-sm font-medium text-neutral-700">Stripe Customer ID</label>
+          <div className="flex gap-2">
+            <input
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+              placeholder="cus_123…"
+              value={deal.stripe_customer_id ?? ""}
+              onChange={(e) => setDeal((d) => ({ ...d, stripe_customer_id: e.target.value || null }))}
+            />
+            <button
+              type="button"
+              className="rounded-lg border px-3 text-sm"
+              onClick={() => setDeal((d) => ({ ...d, stripe_customer_id: (d.stripe_customer_id || "").trim() || null }))}
+              title="Reload customer/address"
+            >
+              Load
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-neutral-500">
+            Paste a Stripe ID to link and auto-fill address (read-only).
+          </p>
+        </div>
+
+        <div className="md:col-span-2">
+          <label className="mb-1 block text-sm font-medium text-neutral-700">Customer / Company name</label>
+          <input
+            type="text"
+            placeholder="Acme District – 2025 renewal"
+            className="w-full rounded-xl border px-3 py-2 text-sm"
+            value={deal.name ?? ""}
+            onChange={(e) => setDeal((d) => ({ ...d, name: e.target.value || null }))}
+          />
+        </div>
+      </div>
+
+      {/* Address card */}
       <div className="rounded-xl border bg-neutral-50 p-4">
         <p className="mb-1 text-xs font-semibold text-neutral-600">Customer Address (read-only)</p>
         {stripeLoading && <p className="text-sm text-neutral-500">Loading Stripe details…</p>}
@@ -175,10 +217,11 @@ export default function DealForm({ onDone, defaultRepKey, lockRep, stripeCustome
         )}
       </div>
 
+      {/* Rep + Deal core fields */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="md:col-span-1">
           <RepSelect
-            value={deal.account_rep ?? ""}  // ensure string for <select>
+            value={deal.account_rep ?? ""}
             onChange={(key) => setDeal((d) => ({ ...d, account_rep: key }))}
             disabled={lockRep}
           />
@@ -192,7 +235,7 @@ export default function DealForm({ onDone, defaultRepKey, lockRep, stripeCustome
             min={0}
             placeholder="0.00"
             className="w-full rounded-xl border px-3 py-2 text-sm"
-            value={deal.value ?? ""}                        // string | number
+            value={deal.value ?? ""}
             onChange={(e) =>
               setDeal((d) => ({
                 ...d,
@@ -206,10 +249,8 @@ export default function DealForm({ onDone, defaultRepKey, lockRep, stripeCustome
           <label className="mb-1 block text-sm font-medium text-neutral-700">Stage</label>
           <select
             className="w-full rounded-xl border px-3 py-2 text-sm"
-            value={deal.stage ?? ""}                        // never undefined
-            onChange={(e) =>
-              setDeal((d) => ({ ...d, stage: (e.target.value as "open" | "paid") || null }))
-            }
+            value={deal.stage ?? ""}
+            onChange={(e) => setDeal((d) => ({ ...d, stage: (e.target.value as "open" | "paid") || null }))}
           >
             <option value="">Select stage…</option>
             <option value="open">Open</option>
@@ -222,23 +263,13 @@ export default function DealForm({ onDone, defaultRepKey, lockRep, stripeCustome
           <input
             type="date"
             className="w-full rounded-xl border px-3 py-2 text-sm"
-            value={deal.close_date ?? ""}                   // string
+            value={deal.close_date ?? ""}
             onChange={(e) => setDeal((d) => ({ ...d, close_date: e.target.value || null }))}
-          />
-        </div>
-
-        <div className="md:col-span-2">
-          <label className="mb-1 block text-sm font-medium text-neutral-700">Deal / Company name</label>
-          <input
-            type="text"
-            placeholder="Acme District – 2025 renewal"
-            className="w-full rounded-xl border px-3 py-2 text-sm"
-            value={deal.name ?? ""}                         // string
-            onChange={(e) => setDeal((d) => ({ ...d, name: e.target.value || null }))}
           />
         </div>
       </div>
 
+      {/* Main contact */}
       <div className="space-y-3 rounded-xl border p-4">
         <p className="text-sm font-semibold text-neutral-700">Main contact</p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -264,6 +295,7 @@ export default function DealForm({ onDone, defaultRepKey, lockRep, stripeCustome
         </div>
       </div>
 
+      {/* Billing contact toggle */}
       <div className="flex items-center gap-2">
         <input
           id="billingDifferent"
@@ -272,9 +304,12 @@ export default function DealForm({ onDone, defaultRepKey, lockRep, stripeCustome
           checked={billingDifferent}
           onChange={(e) => setBillingDifferent(e.target.checked)}
         />
-        <label htmlFor="billingDifferent" className="text-sm text-neutral-800">Billing contact is different</label>
+        <label htmlFor="billingDifferent" className="text-sm text-neutral-800">
+          Billing contact is different
+        </label>
       </div>
 
+      {/* Billing contact (conditional) */}
       {billingDifferent && (
         <div className="space-y-3 rounded-xl border p-4">
           <p className="text-sm font-semibold text-neutral-700">Billing contact</p>
@@ -302,6 +337,7 @@ export default function DealForm({ onDone, defaultRepKey, lockRep, stripeCustome
         </div>
       )}
 
+      {/* Actions */}
       <div className="flex items-center justify-end gap-2 pt-2">
         <button type="button" className="rounded-xl border px-4 py-2 text-sm" onClick={onDone}>
           Cancel
