@@ -1,14 +1,13 @@
-// hooks/useRepsOptions.ts
-import { useEffect, useMemo, useState } from "react";
+// src/hooks/useRepsOptions.ts
+import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
 export type RepOption = {
-  key: string;                 // stable key (id or email)
-  id?: string | null;          // profiles.id if available
+  key: string;
+  id?: string | null;
   email?: string | null;
-  name: string;                // best-available name
+  name: string;
   source: "profiles" | "commission_schedule" | "merged";
-  avatar_url?: string | null;  // if you store it in profiles
   active?: boolean | null;
 };
 
@@ -18,20 +17,24 @@ type ProfilesRow = {
   email?: string | null;
   avatar_url?: string | null;
   active?: boolean | null;
-  role?: string | null; // optional—if you store roles
-  is_rep?: boolean | null; // optional—if you flag reps
+  role?: string | null;
+  is_rep?: boolean | null;
 };
 
 type CommissionRow = {
-  rep_id?: string | null;      // if you store a user id
+  rep_id?: string | null;
   rep_email?: string | null;
   rep_name?: string | null;
   active?: boolean | null;
 };
 
+function bestRepKey(r: { email?: string | null; id?: string | null; key: string }) {
+  return r.email || r.id || r.key;
+}
+
 export function useRepsOptions() {
-  const [data, setData] = useState<RepOption[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [reps, setReps] = useState<RepOption[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -41,78 +44,55 @@ export function useRepsOptions() {
       setLoading(true);
       setError(null);
 
-      // 1) Profiles
       const { data: profiles, error: pErr } = await supabase
         .from("profiles")
         .select("id, full_name, email, avatar_url, active, role, is_rep");
 
-      if (pErr) {
-        if (!cancelled) setError(`profiles: ${pErr.message}`);
-      }
-
-      // 2) Commission schedule
       const { data: comms, error: cErr } = await supabase
         .from("commission_schedule")
         .select("rep_id, rep_email, rep_name, active");
 
-      if (cErr) {
-        if (!cancelled) setError(prev => (prev ? `${prev} | commission_schedule: ${cErr.message}` : `commission_schedule: ${cErr.message}`));
+      if (pErr || cErr) {
+        const msg = [
+          pErr ? `profiles: ${pErr.message}` : null,
+          cErr ? `commission_schedule: ${cErr.message}` : null,
+        ].filter(Boolean).join(" | ");
+        if (!cancelled) setError(msg || "Failed to load reps");
       }
 
-      // Normalize
       const fromProfiles: RepOption[] = (profiles || []).map((p: ProfilesRow) => ({
-        key: p.id || p.email || crypto.randomUUID(),
+        key: p.email || p.id || crypto.randomUUID(),
         id: p.id,
         email: p.email || null,
-        name: (p.full_name && p.full_name.trim()) || (p.email ?? "Unnamed rep"),
+        name: (p.full_name && p.full_name.trim()) || p.email || "Unnamed rep",
         source: "profiles",
-        avatar_url: p.avatar_url ?? null,
         active: p.active ?? null,
       }));
 
       const fromComms: RepOption[] = (comms || []).map((r: CommissionRow) => ({
-        key: r.rep_id || r.rep_email || crypto.randomUUID(),
+        key: r.rep_email || r.rep_id || crypto.randomUUID(),
         id: r.rep_id ?? null,
         email: r.rep_email ?? null,
-        name: (r.rep_name && r.rep_name.trim()) || (r.rep_email ?? "Unnamed rep"),
+        name: (r.rep_name && r.rep_name.trim()) || r.rep_email || "Unnamed rep",
         source: "commission_schedule",
-        avatar_url: null,
         active: r.active ?? null,
       }));
 
-      // 3) Merge by email first, then by id
-      const byKey = new Map<string, RepOption>();
-
-      // seed with profiles (preferred)
-      for (const rep of fromProfiles) {
-        const k = rep.email || rep.id || rep.key;
-        byKey.set(k, rep);
-      }
-
-      // fold in commission rows
-      for (const rep of fromComms) {
-        const k = rep.email || rep.id || rep.key;
-        if (byKey.has(k)) {
-          const existing = byKey.get(k)!;
-          // prefer profiles data, but fill missing fields from commission_schedule
-          byKey.set(k, {
-            ...existing,
-            source: "merged",
-            active: existing.active ?? rep.active ?? null,
-            // leave name/avatar from profiles if present
-          });
+      const map = new Map<string, RepOption>();
+      fromProfiles.forEach((rep) => map.set(bestRepKey(rep), rep));
+      fromComms.forEach((rep) => {
+        const k = bestRepKey(rep);
+        if (map.has(k)) {
+          const ex = map.get(k)!;
+          map.set(k, { ...ex, source: "merged", active: ex.active ?? rep.active ?? null });
         } else {
-          byKey.set(k, rep);
+          map.set(k, rep);
         }
-      }
+      });
 
-      // Optional: filter to only active reps, if you store that flag
-      const merged = Array.from(byKey.values())
-        // .filter(r => r.active !== false) // enable if you want to hide inactive
-        .sort((a, b) => a.name.localeCompare(b.name));
-
+      const merged = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
       if (!cancelled) {
-        setData(merged);
+        setReps(merged);
         setLoading(false);
       }
     }
@@ -121,5 +101,5 @@ export function useRepsOptions() {
     return () => { cancelled = true; };
   }, []);
 
-  return { reps: data, loading, error };
+  return { reps, loading, error };
 }
