@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RepSelect from "../reps/RepSelect";
 import { supabase } from "../../lib/supabaseClient";
-import CustomerSearchSelect, { StripeCustomerLite } from "../customers/CustomerSearchSelect";
 
 /* ---------------- Types ---------------- */
 export type DealFormProps = {
