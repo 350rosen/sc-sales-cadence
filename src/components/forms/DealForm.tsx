@@ -1,5 +1,5 @@
 // src/components/forms/DealForm.tsx
-import { useCallback, useEffect, useMemo, useState } from "react"; // ← no default React import
+import { useCallback, useEffect, useState } from "react";
 import RepSelect from "../reps/RepSelect";
 import { supabase } from "../../lib/supabaseClient";
 
