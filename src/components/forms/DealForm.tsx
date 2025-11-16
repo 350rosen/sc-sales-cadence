@@ -5,7 +5,6 @@ import { supabase } from "../../lib/supabaseClient";
 export type DealFormProps = {
   onDone?: () => void;
   defaultRepKey?: string | null; // optional rep ID from parent (e.g. current rep)
-  lockRep?: boolean; // kept for compatibility, but unused now
 };
 
 type DealInsert = {
@@ -291,7 +290,6 @@ function useStripeCustomer(stripeCustomerId?: string | null) {
 export default function DealForm({
   onDone,
   defaultRepKey,
-  lockRep, // unused now but left in signature
 }: DealFormProps) {
   const [billingDifferent, setBillingDifferent] = useState<boolean>(false);
 
