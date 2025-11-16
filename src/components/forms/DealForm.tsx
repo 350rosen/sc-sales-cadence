@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import RepSelect from "../reps/RepSelect";
 import { supabase } from "../../lib/supabaseClient";
 
 /* ---------------- Types ---------------- */
 export type DealFormProps = {
   onDone?: () => void;
-  defaultRepKey?: string | null;   // used to prefill rep on first customer select
-  lockRep?: boolean;
+  defaultRepKey?: string | null; // optional rep ID from parent (e.g. current rep)
+  lockRep?: boolean; // kept for compatibility, but unused now
 };
 
 type DealInsert = {
@@ -44,10 +43,23 @@ type StripeCustomerFull = {
 
 type StripeCustomerLite = { id: string; name: string; email: string };
 
+type RepProfile = {
+  id: string;
+  full_name: string | null;
+  email: string;
+  role: string | null;
+};
+
 /* ---------------- Helpers ---------------- */
 const fmtAddr = (a?: StripeAddress | null) => {
   if (!a) return null;
-  const parts = [a.line1, a.line2, [a.city, a.state].filter(Boolean).join(", "), a.postal_code, a.country].filter(Boolean);
+  const parts = [
+    a.line1,
+    a.line2,
+    [a.city, a.state].filter(Boolean).join(", "),
+    a.postal_code,
+    a.country,
+  ].filter(Boolean);
   return parts.length ? parts.join(" • ") : null;
 };
 
@@ -81,13 +93,19 @@ function CustomerSearchSelect({
     (async () => {
       try {
         setLoading(true);
-        const res = await fetch(`/api/stripe/customers?id=${encodeURIComponent(value)}`);
+        const res = await fetch(
+          `/api/stripe/customers?id=${encodeURIComponent(value)}`
+        );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const full = (await res.json()) as any;
         if (!cancelled) {
-          const lite: StripeCustomerLite = { id: full.id, name: full.name ?? "", email: full.email ?? "" };
-          setSelected(lite);
-          setLoading(false);
+          const lite: StripeCustomerLite = {
+            id: full.id,
+            name: full.name ?? "",
+            email: full.email ?? "",
+          };
+            setSelected(lite);
+            setLoading(false);
         }
       } catch {
         if (!cancelled) setLoading(false);
@@ -108,7 +126,9 @@ function CustomerSearchSelect({
     const t = setTimeout(async () => {
       try {
         setLoading(true);
-        const url = query ? `/api/stripe/customers?q=${encodeURIComponent(query)}` : `/api/stripe/customers`;
+        const url = query
+          ? `/api/stripe/customers?q=${encodeURIComponent(query)}`
+          : `/api/stripe/customers`;
         const res = await fetch(url, { signal: controller.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const list = (await res.json()) as StripeCustomerLite[];
@@ -141,7 +161,9 @@ function CustomerSearchSelect({
 
   return (
     <div className={className} ref={boxRef}>
-      <label className="mb-1 block text-sm font-medium text-neutral-700">Customer</label>
+      <label className="mb-1 block text-sm font-medium text-neutral-700">
+        Customer
+      </label>
       <div className="relative">
         <input
           className="w-full rounded-xl border px-3 py-2 text-sm"
@@ -155,14 +177,25 @@ function CustomerSearchSelect({
         />
         {open && (
           <div className="absolute z-20 mt-1 w-full rounded-xl border bg-white shadow">
-            {loading && <div className="px-3 py-2 text-sm text-neutral-500">Searching…</div>}
+            {loading && (
+              <div className="px-3 py-2 text-sm text-neutral-500">
+                Searching…
+              </div>
+            )}
             {!loading && options.length === 0 && (
-              <div className="px-3 py-2 text-sm text-neutral-500">No results</div>
+              <div className="px-3 py-2 text-sm text-neutral-500">
+                No results
+              </div>
             )}
             {!loading &&
               options.map((opt) => {
                 const label = opt.name || opt.email || opt.id;
-                const sub = opt.name && opt.email ? opt.email : opt.name ? "" : opt.email;
+                const sub =
+                  opt.name && opt.email
+                    ? opt.email
+                    : opt.name
+                    ? ""
+                    : opt.email;
                 return (
                   <button
                     type="button"
@@ -176,7 +209,9 @@ function CustomerSearchSelect({
                     }}
                   >
                     <div className="font-medium">{label}</div>
-                    {sub ? <div className="text-xs text-neutral-500">{sub}</div> : null}
+                    {sub ? (
+                      <div className="text-xs text-neutral-500">{sub}</div>
+                    ) : null}
                   </button>
                 );
               })}
@@ -224,7 +259,9 @@ function useStripeCustomer(stripeCustomerId?: string | null) {
     setError(null);
     (async () => {
       try {
-        const res = await fetch(`/api/stripe/customers?id=${encodeURIComponent(stripeCustomerId)}`);
+        const res = await fetch(
+          `/api/stripe/customers?id=${encodeURIComponent(stripeCustomerId)}`
+        );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const full = (await res.json()) as StripeCustomerFull;
         if (!cancelled) {
@@ -232,27 +269,39 @@ function useStripeCustomer(stripeCustomerId?: string | null) {
           setLoading(false);
         }
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "Failed to load Stripe customer";
+        const msg =
+          e instanceof Error
+            ? e.message
+            : "Failed to load Stripe customer";
         if (!cancelled) {
           setError(msg);
           setLoading(false);
         }
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [stripeCustomerId]);
 
   return { customer: cust, loading, error };
 }
 
 /* ---------------- Main Component ---------------- */
-export default function DealForm({ onDone, defaultRepKey, lockRep }: DealFormProps) {
+export default function DealForm({
+  onDone,
+  defaultRepKey,
+  lockRep, // unused now but left in signature
+}: DealFormProps) {
   const [billingDifferent, setBillingDifferent] = useState<boolean>(false);
+
+  const [repProfile, setRepProfile] = useState<RepProfile | null>(null);
+  const [repLoading, setRepLoading] = useState<boolean>(true);
 
   const [deal, setDeal] = useState<DealInsert>({
     name: null,
     value: null,
-    stage: "open", // locked
+    stage: "open",
     close_date: null,
     account_rep: defaultRepKey ?? null,
     main_contact_name: null,
@@ -264,10 +313,53 @@ export default function DealForm({ onDone, defaultRepKey, lockRep }: DealFormPro
     stripe_customer_id: null,
   });
 
-  const { customer: stripe, loading: stripeLoading, error: stripeError } =
-    useStripeCustomer(deal.stripe_customer_id ?? null);
+  const {
+    customer: stripe,
+    loading: stripeLoading,
+    error: stripeError,
+  } = useStripeCustomer(deal.stripe_customer_id ?? null);
 
-  // Prefill main contact from Stripe on load/change
+  // Auto-select rep based on logged-in user's email (profiles table)
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { data: session, error: userError } =
+          await supabase.auth.getUser();
+        const email = session?.user?.email;
+        if (userError || !email) {
+          setRepLoading(false);
+          return;
+        }
+
+        const { data: profile, error } = await supabase
+          .from("profiles")
+          .select("id, email, role, full_name")
+          .eq("email", email)
+          .maybeSingle();
+
+        if (!cancelled && !error && profile) {
+          const p = profile as RepProfile;
+          setRepProfile(p);
+          setDeal((d) => ({
+            ...d,
+            account_rep: d.account_rep ?? p.id,
+          }));
+        }
+
+        if (!cancelled) setRepLoading(false);
+      } catch {
+        if (!cancelled) setRepLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [defaultRepKey]);
+
+  // Prefill main contact from Stripe; DO NOT touch account_rep here
   useEffect(() => {
     if (!stripe) return;
     setDeal((d) => ({
@@ -276,10 +368,8 @@ export default function DealForm({ onDone, defaultRepKey, lockRep }: DealFormPro
       main_contact_name: stripe.name ?? d.main_contact_name,
       main_contact_email: stripe.email ?? d.main_contact_email,
       main_contact_phone: stripe.phone ?? d.main_contact_phone,
-      // Prefill rep if not chosen yet and a default is provided
-      account_rep: d.account_rep ?? defaultRepKey ?? null,
     }));
-  }, [stripe, defaultRepKey]);
+  }, [stripe]);
 
   const shippingAddr = fmtAddr(stripe?.shipping?.address);
   const billingAddr = fmtAddr(stripe?.address);
@@ -306,9 +396,15 @@ export default function DealForm({ onDone, defaultRepKey, lockRep }: DealFormPro
       main_contact_name: deal.main_contact_name,
       main_contact_email: deal.main_contact_email,
       main_contact_phone: deal.main_contact_phone,
-      billing_contact_name: billingDifferent ? deal.billing_contact_name : deal.main_contact_name,
-      billing_contact_email: billingDifferent ? deal.billing_contact_email : deal.main_contact_email,
-      billing_contact_phone: billingDifferent ? deal.billing_contact_phone : deal.main_contact_phone,
+      billing_contact_name: billingDifferent
+        ? deal.billing_contact_name
+        : deal.main_contact_name,
+      billing_contact_email: billingDifferent
+        ? deal.billing_contact_email
+        : deal.main_contact_email,
+      billing_contact_phone: billingDifferent
+        ? deal.billing_contact_phone
+        : deal.main_contact_phone,
       stripe_customer_id: deal.stripe_customer_id ?? null,
     };
     const { error } = await supabase.from("deals").insert(payload);
@@ -325,7 +421,9 @@ export default function DealForm({ onDone, defaultRepKey, lockRep }: DealFormPro
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold">Add Deal</h3>
         <div className="text-xs text-neutral-500">
-          {deal.stripe_customer_id ? `Stripe: ${deal.stripe_customer_id}` : "No Stripe customer"}
+          {deal.stripe_customer_id
+            ? `Stripe: ${deal.stripe_customer_id}`
+            : "No Stripe customer"}
         </div>
       </div>
 
@@ -337,50 +435,72 @@ export default function DealForm({ onDone, defaultRepKey, lockRep }: DealFormPro
             ...d,
             stripe_customer_id: id,
             name: lite?.name || lite?.email || null,
-            // (rep prefill handled in effect using defaultRepKey)
           }));
         }}
       />
 
       {/* Address card */}
       <div className="rounded-xl border bg-neutral-50 p-4">
-        <p className="mb-1 text-xs font-semibold text-neutral-600">Customer Address (read-only)</p>
-        {stripeLoading && <p className="text-sm text-neutral-500">Loading Stripe details…</p>}
-        {!stripeLoading && stripeError && <p className="text-sm text-red-600">Failed to load Stripe: {stripeError}</p>}
+        <p className="mb-1 text-xs font-semibold text-neutral-600">
+          Customer Address (read-only)
+        </p>
+        {stripeLoading && (
+          <p className="text-sm text-neutral-500">
+            Loading Stripe details…
+          </p>
+        )}
+        {!stripeLoading && stripeError && (
+          <p className="text-sm text-red-600">
+            Failed to load Stripe: {stripeError}
+          </p>
+        )}
         {!stripeLoading && !stripeError && (
           <>
             {anyAddr ? (
               <div className="space-y-1 text-sm">
                 {shippingAddr && (
                   <div>
-                    <span className="font-medium">Shipping:</span> {shippingAddr}
+                    <span className="font-medium">Shipping:</span>{" "}
+                    {shippingAddr}
                   </div>
                 )}
                 {billingAddr && (
                   <div>
-                    <span className="font-medium">Billing:</span> {billingAddr}
+                    <span className="font-medium">Billing:</span>{" "}
+                    {billingAddr}
                   </div>
                 )}
               </div>
             ) : (
-              <p className="text-sm text-neutral-500">No address on file.</p>
+              <p className="text-sm text-neutral-500">
+                No address on file.
+              </p>
             )}
           </>
         )}
       </div>
 
-      {/* Rep + core fields */}
+      {/* Rep (read-only) + core fields */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="md:col-span-1">
-          <RepSelect
-            value={deal.account_rep ?? ""}
-            onChange={(key) => setDeal((d) => ({ ...d, account_rep: key }))}
-            disabled={lockRep}
-          />
+          <label className="mb-1 block text-sm font-medium text-neutral-700">
+            Rep
+          </label>
+          <div className="w-full rounded-xl border bg-neutral-100 px-3 py-2 text-sm text-neutral-800">
+            {repLoading
+              ? "Loading rep…"
+              : repProfile
+              ? `${repProfile.full_name ?? repProfile.email} — ${
+                  repProfile.email
+                }`
+              : "No rep profile found"}
+          </div>
         </div>
 
         <div className="md:col-span-1">
-          <label className="mb-1 block text-sm font-medium text-neutral-700">Value (USD)</label>
+          <label className="mb-1 block text-sm font-medium text-neutral-700">
+            Value (USD)
+          </label>
           <input
             type="number"
             step="0.01"
@@ -391,45 +511,70 @@ export default function DealForm({ onDone, defaultRepKey, lockRep }: DealFormPro
             onChange={(e) =>
               setDeal((d) => ({
                 ...d,
-                value: e.target.value === "" ? null : Number(e.target.value),
+                value:
+                  e.target.value === "" ? null : Number(e.target.value),
               }))
             }
           />
         </div>
 
         <div className="md:col-span-1">
-          <label className="mb-1 block text-sm font-medium text-neutral-700">Close date</label>
+          <label className="mb-1 block text-sm font-medium text-neutral-700">
+            Close date
+          </label>
           <input
             type="date"
             className="w-full rounded-xl border px-3 py-2 text-sm"
             value={deal.close_date ?? ""}
-            onChange={(e) => setDeal((d) => ({ ...d, close_date: e.target.value || null }))}
+            onChange={(e) =>
+              setDeal((d) => ({
+                ...d,
+                close_date: e.target.value || null,
+              }))
+            }
           />
         </div>
       </div>
 
       {/* Main contact */}
       <div className="space-y-3 rounded-xl border p-4">
-        <p className="text-sm font-semibold text-neutral-700">Main contact</p>
+        <p className="text-sm font-semibold text-neutral-700">
+          Main contact
+        </p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <input
             className="rounded-xl border px-3 py-2 text-sm"
             placeholder="Name"
             value={deal.main_contact_name ?? ""}
-            onChange={(e) => setDeal((d) => ({ ...d, main_contact_name: e.target.value || null }))}
+            onChange={(e) =>
+              setDeal((d) => ({
+                ...d,
+                main_contact_name: e.target.value || null,
+              }))
+            }
           />
           <input
             className="rounded-xl border px-3 py-2 text-sm"
             placeholder="Email"
             type="email"
             value={deal.main_contact_email ?? ""}
-            onChange={(e) => setDeal((d) => ({ ...d, main_contact_email: e.target.value || null }))}
+            onChange={(e) =>
+              setDeal((d) => ({
+                ...d,
+                main_contact_email: e.target.value || null,
+              }))
+            }
           />
           <input
             className="rounded-xl border px-3 py-2 text-sm"
             placeholder="Phone"
             value={deal.main_contact_phone ?? ""}
-            onChange={(e) => setDeal((d) => ({ ...d, main_contact_phone: e.target.value || null }))}
+            onChange={(e) =>
+              setDeal((d) => ({
+                ...d,
+                main_contact_phone: e.target.value || null,
+              }))
+            }
           />
         </div>
       </div>
@@ -443,33 +588,53 @@ export default function DealForm({ onDone, defaultRepKey, lockRep }: DealFormPro
           checked={billingDifferent}
           onChange={(e) => setBillingDifferent(e.target.checked)}
         />
-        <label htmlFor="billingDifferent" className="text-sm text-neutral-800">
+        <label
+          htmlFor="billingDifferent"
+          className="text-sm text-neutral-800"
+        >
           Billing contact is different
         </label>
       </div>
 
       {billingDifferent && (
         <div className="space-y-3 rounded-xl border p-4">
-          <p className="text-sm font-semibold text-neutral-700">Billing contact</p>
+          <p className="text-sm font-semibold text-neutral-700">
+            Billing contact
+          </p>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <input
               className="rounded-xl border px-3 py-2 text-sm"
               placeholder="Name"
               value={deal.billing_contact_name ?? ""}
-              onChange={(e) => setDeal((d) => ({ ...d, billing_contact_name: e.target.value || null }))}
+              onChange={(e) =>
+                setDeal((d) => ({
+                  ...d,
+                  billing_contact_name: e.target.value || null,
+                }))
+              }
             />
             <input
               className="rounded-xl border px-3 py-2 text-sm"
               placeholder="Email"
               type="email"
               value={deal.billing_contact_email ?? ""}
-              onChange={(e) => setDeal((d) => ({ ...d, billing_contact_email: e.target.value || null }))}
+              onChange={(e) =>
+                setDeal((d) => ({
+                  ...d,
+                  billing_contact_email: e.target.value || null,
+                }))
+              }
             />
             <input
               className="rounded-xl border px-3 py-2 text-sm"
               placeholder="Phone"
               value={deal.billing_contact_phone ?? ""}
-              onChange={(e) => setDeal((d) => ({ ...d, billing_contact_phone: e.target.value || null }))}
+              onChange={(e) =>
+                setDeal((d) => ({
+                  ...d,
+                  billing_contact_phone: e.target.value || null,
+                }))
+              }
             />
           </div>
         </div>
